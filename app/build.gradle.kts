@@ -2,6 +2,17 @@ plugins {
     id("com.android.application")
 }
 
+val releaseStoreFile = providers.environmentVariable("XIAOAI_RELEASE_STORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("XIAOAI_RELEASE_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("XIAOAI_RELEASE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("XIAOAI_RELEASE_KEY_PASSWORD").orNull
+val releaseSigningConfigured = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "io.github.finall1008.xiaoaimcp"
     compileSdk = 37
@@ -11,9 +22,20 @@ android {
         applicationId = "io.github.finall1008.xiaoaimcp"
         minSdk = 26
         targetSdk = 37
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 5
+        versionName = "1.1.0"
         testInstrumentationRunner = "android.app.Instrumentation"
+    }
+
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseStoreFile))
+                storePassword = requireNotNull(releaseStorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
+            }
+        }
     }
 
     buildTypes {
@@ -25,6 +47,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 

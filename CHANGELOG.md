@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 - 2026-08-23
+
+- Replace the exact XiaoAi versionCode gate with a minimum `8.0` versionName policy in both
+  the configuration app and injected process.
+- Keep `8.0.30.4121` as a verified fast-path profile and add safe structural discovery across
+  base and split DEX files for relocated MCP classes and config readers.
+- Install text, object, and live-reload capabilities independently, failing closed on ambiguous
+  targets and degrading to the next startup when live reload cannot be resolved.
+- Turn the target APK verifier into a version-independent compatibility marker diagnostic.
+
 ## 1.0.3
 
 - Remove the runtime lookup of an optimized-away `static final` version field.

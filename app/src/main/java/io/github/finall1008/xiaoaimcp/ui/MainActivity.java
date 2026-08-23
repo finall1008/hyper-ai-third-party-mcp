@@ -25,10 +25,12 @@ import android.widget.Toast;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.OptionalInt;
 
 import io.github.finall1008.xiaoaimcp.BridgeApplication;
 import io.github.finall1008.xiaoaimcp.BridgeContract;
 import io.github.finall1008.xiaoaimcp.R;
+import io.github.finall1008.xiaoaimcp.TargetVersionPolicy;
 import io.github.finall1008.xiaoaimcp.config.McpServer;
 import io.github.finall1008.xiaoaimcp.config.RemoteConfigRepository;
 import io.github.libxposed.service.XposedService;
@@ -81,7 +83,7 @@ public final class MainActivity extends Activity
 
         root.addView(UiSupport.title(this, "超级小爱 MCP Bridge"), UiSupport.matchWrap());
         TextView subtitle = UiSupport.text(this,
-                "为超级小爱 8.0.30.4121 注入 Streamable HTTP / SSE MCP 服务器。",
+                "为超级小爱 8.0 及以上版本注入 Streamable HTTP / SSE MCP 服务器。",
                 14);
         subtitle.setTextColor(Color.rgb(90, 95, 108));
         subtitle.setPadding(0, 0, 0, UiSupport.dp(this, 14));
@@ -146,7 +148,9 @@ public final class MainActivity extends Activity
         }
 
         boolean targetReady = updateTargetStatus();
-        addButton.setEnabled(serviceReady && targetReady);
+        boolean editingEnabled = serviceReady && targetReady;
+        addButton.setEnabled(editingEnabled);
+        adapter.setEditingEnabled(editingEnabled);
 
         SharedPreferences preferences = serviceReady ? BridgeApplication.remotePreferences() : null;
         repository = preferences == null ? null : new RemoteConfigRepository(preferences);
@@ -173,10 +177,24 @@ public final class MainActivity extends Activity
             long code = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
                     ? info.getLongVersionCode()
                     : (info.versionCode & 0xffffffffL);
-            boolean supported = code == BridgeContract.TARGET_VERSION_CODE;
-            setStatus(targetStatus, supported,
-                    "超级小爱 " + info.versionName + " (" + code + ")"
-                            + (supported ? " · 已支持" : " · 版本不受支持"));
+            String versionName = info.versionName;
+            boolean supported = TargetVersionPolicy.isSupported(versionName);
+            boolean reference = supported
+                    && BridgeContract.REFERENCE_VERSION_NAME.equals(versionName)
+                    && code == BridgeContract.REFERENCE_VERSION_CODE;
+            String version = "超级小爱 " + String.valueOf(versionName) + " (" + code + ")";
+            if (reference) {
+                setStatus(targetStatus, StatusLevel.SUCCESS, version + " · 已验证");
+            } else if (supported) {
+                setStatus(targetStatus, StatusLevel.WARNING,
+                        version + " · 将在目标进程中自动探测兼容性");
+            } else {
+                OptionalInt major = TargetVersionPolicy.parseMajor(versionName);
+                String reason = major.isPresent()
+                        ? "要求超级小爱 8.0 或更高版本"
+                        : "无法识别版本号，要求超级小爱 8.0 或更高版本";
+                setStatus(targetStatus, StatusLevel.ERROR, version + " · " + reason);
+            }
             return supported;
         } catch (PackageManager.NameNotFoundException error) {
             setStatus(targetStatus, false, "未安装超级小爱：" + BridgeContract.TARGET_PACKAGE);
@@ -185,9 +203,23 @@ public final class MainActivity extends Activity
     }
 
     private void setStatus(TextView view, boolean success, String text) {
-        view.setText(getString(success ? R.string.status_success : R.string.status_error, text));
-        view.setTextColor(success ? Color.rgb(27, 125, 75) : Color.rgb(180, 62, 52));
-        view.setBackgroundColor(success ? Color.rgb(235, 248, 240) : Color.rgb(253, 239, 237));
+        setStatus(view, success ? StatusLevel.SUCCESS : StatusLevel.ERROR, text);
+    }
+
+    private void setStatus(TextView view, StatusLevel level, String text) {
+        if (level == StatusLevel.SUCCESS) {
+            view.setText(getString(R.string.status_success, text));
+            view.setTextColor(Color.rgb(27, 125, 75));
+            view.setBackgroundColor(Color.rgb(235, 248, 240));
+        } else if (level == StatusLevel.WARNING) {
+            view.setText(getString(R.string.status_warning, text));
+            view.setTextColor(Color.rgb(145, 96, 16));
+            view.setBackgroundColor(Color.rgb(255, 247, 226));
+        } else {
+            view.setText(getString(R.string.status_error, text));
+            view.setTextColor(Color.rgb(180, 62, 52));
+            view.setBackgroundColor(Color.rgb(253, 239, 237));
+        }
     }
 
     private void edit(McpServer server) {
@@ -230,6 +262,14 @@ public final class MainActivity extends Activity
 
     private final class ServerAdapter extends BaseAdapter {
         private final List<McpServer> servers = new ArrayList<>();
+        private boolean editingEnabled;
+
+        void setEditingEnabled(boolean enabled) {
+            if (editingEnabled != enabled) {
+                editingEnabled = enabled;
+                notifyDataSetChanged();
+            }
+        }
 
         void replace(List<McpServer> updated) {
             servers.clear();
@@ -280,28 +320,33 @@ public final class MainActivity extends Activity
             Switch enabled = new Switch(MainActivity.this);
             enabled.setChecked(server.enabled());
             enabled.setContentDescription("启用 " + server.name());
-            enabled.setOnCheckedChangeListener((CompoundButton button, boolean checked) -> {
-                if (checked == server.enabled()) {
-                    return;
-                }
-                try {
-                    requireRepository().setEnabled(server.id(), checked);
-                    refresh();
-                } catch (Exception error) {
-                    button.setOnCheckedChangeListener(null);
-                    button.setChecked(server.enabled());
-                    showError(error);
-                }
-            });
+            enabled.setEnabled(editingEnabled);
+            if (editingEnabled) {
+                enabled.setOnCheckedChangeListener((CompoundButton button, boolean checked) -> {
+                    if (checked == server.enabled()) {
+                        return;
+                    }
+                    try {
+                        requireRepository().setEnabled(server.id(), checked);
+                        refresh();
+                    } catch (Exception error) {
+                        button.setOnCheckedChangeListener(null);
+                        button.setChecked(server.enabled());
+                        showError(error);
+                    }
+                });
+            }
             row.addView(enabled, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
             ));
-            row.setOnClickListener(v -> edit(server));
-            row.setOnLongClickListener(v -> {
-                delete(server);
-                return true;
-            });
+            if (editingEnabled) {
+                row.setOnClickListener(v -> edit(server));
+                row.setOnLongClickListener(v -> {
+                    delete(server);
+                    return true;
+                });
+            }
 
             LinearLayout wrapper = new LinearLayout(MainActivity.this);
             wrapper.setPadding(0, UiSupport.dp(MainActivity.this, 5), 0,
@@ -309,5 +354,11 @@ public final class MainActivity extends Activity
             wrapper.addView(row, UiSupport.matchWrap());
             return wrapper;
         }
+    }
+
+    private enum StatusLevel {
+        SUCCESS,
+        WARNING,
+        ERROR
     }
 }

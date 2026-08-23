@@ -1,0 +1,238 @@
+package io.github.finall1008.xiaoaimcp.hook;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
+
+import org.junit.Test;
+
+import java.util.List;
+import java.util.Map;
+
+import kotlin.coroutines.Continuation;
+
+public final class HookTargetResolverTest {
+    @Test
+    public void structurallyResolvesRelocatedManagerAndObjectTypes() throws Exception {
+        ResolvedHookTargets targets = resolve(AdapterManager.class, ServerConfig.class);
+
+        assertEquals("structural-discovery", targets.mode());
+        assertEquals(AdapterManager.class, targets.managerClass());
+        assertTrue(targets.hasTextConfig());
+        assertTrue(targets.hasObjectConfig());
+        assertNotNull(targets.reloadMethod());
+    }
+
+    @Test
+    public void safelyDegradesToUniqueTextReader() throws Exception {
+        ResolvedHookTargets targets = resolve(TextOnlyManager.class);
+
+        assertTrue(targets.hasTextConfig());
+        assertFalse(targets.hasObjectConfig());
+    }
+
+    @Test
+    public void keepsConfigCapabilityWhenReloadAnchorIsMissing() throws Exception {
+        ResolvedHookTargets targets = resolve(NoReloadManager.class);
+
+        assertTrue(targets.hasTextConfig());
+        assertFalse(targets.hasObjectConfig());
+        assertNull(targets.reloadMethod());
+    }
+
+    @Test
+    public void keepsTextCapabilityWhenObjectConstructorChanges() throws Exception {
+        ResolvedHookTargets targets = resolve(BrokenObjectManager.class, BrokenServer.class);
+
+        assertTrue(targets.hasTextConfig());
+        assertFalse(targets.hasObjectConfig());
+    }
+
+    @Test
+    public void rejectsAmbiguousManagersAndMissingAnchors() {
+        assertThrows(HookTargetResolver.ResolutionException.class,
+                () -> resolve(TextOnlyManager.class, SecondManager.class));
+        assertThrows(HookTargetResolver.ResolutionException.class,
+                () -> resolve(NoAnchors.class));
+    }
+
+    private static ResolvedHookTargets resolve(Class<?>... classes) throws Exception {
+        List<String> names = java.util.Arrays.stream(classes)
+                .map(Class::getName)
+                .toList();
+        return HookTargetResolver.resolve(
+                HookTargetResolverTest.class.getClassLoader(),
+                () -> names
+        );
+    }
+
+    public static final class AdapterManager {
+        public String renamedTextReader() {
+            return "{}";
+        }
+
+        public ServersConfig renamedObjectReader() {
+            return null;
+        }
+
+        public void syncConfigAndDiscoverIfNeeded() {
+        }
+
+        public Object reloadConfig(Continuation continuation) {
+            return null;
+        }
+
+        public Object loadCatalogAndRegister(Continuation continuation) {
+            return null;
+        }
+    }
+
+    public static final class TextOnlyManager {
+        public String relocatedReader() {
+            return "{}";
+        }
+
+        public void syncConfigAndDiscoverIfNeeded() {
+        }
+
+        public Object reloadConfig(Continuation continuation) {
+            return null;
+        }
+
+        public Object loadCatalogAndRegister(Continuation continuation) {
+            return null;
+        }
+    }
+
+    public static final class SecondManager {
+        public String anotherReader() {
+            return "{}";
+        }
+
+        public void syncConfigAndDiscoverIfNeeded() {
+        }
+
+        public Object reloadConfig(Continuation continuation) {
+            return null;
+        }
+
+        public Object loadCatalogAndRegister(Continuation continuation) {
+            return null;
+        }
+    }
+
+    public static final class NoReloadManager {
+        public String textReader() {
+            return "{}";
+        }
+
+        public void syncConfigAndDiscoverIfNeeded() {
+        }
+
+        public Object loadCatalogAndRegister(Continuation continuation) {
+            return null;
+        }
+    }
+
+    public static final class BrokenObjectManager {
+        public String textReader() {
+            return "{}";
+        }
+
+        public BrokenServers objectReader() {
+            return null;
+        }
+
+        public void syncConfigAndDiscoverIfNeeded() {
+        }
+
+        public Object reloadConfig(Continuation continuation) {
+            return null;
+        }
+
+        public Object loadCatalogAndRegister(Continuation continuation) {
+            return null;
+        }
+    }
+
+    public static final class NoAnchors {
+        public String config() {
+            return "{}";
+        }
+    }
+
+    public static final class ServersConfig {
+        private final List<ServerConfig> servers;
+        private final boolean gatewayMode;
+
+        public ServersConfig(List<ServerConfig> servers, Map<String, Object> ignored,
+                             boolean gatewayMode) {
+            this.servers = servers;
+            this.gatewayMode = gatewayMode;
+        }
+
+        public List<ServerConfig> getAllServers() {
+            return servers;
+        }
+
+        public boolean getGatewayMode() {
+            return gatewayMode;
+        }
+    }
+
+    public static final class ServerConfig {
+        private final String name;
+
+        public ServerConfig(
+                String name,
+                String url,
+                Object connection,
+                String first,
+                String second,
+                List<?> list,
+                Map<?, ?> map,
+                String description,
+                boolean enabled,
+                Map<?, ?> headers,
+                Long timeout,
+                int seconds,
+                boolean toolPrefix,
+                boolean builtin,
+                List<?> tags,
+                String transport,
+                String suffix
+        ) {
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+    }
+
+    public static final class BrokenServers {
+        public BrokenServers(List<BrokenServer> servers, Map<String, Object> ignored,
+                             boolean gatewayMode) {
+        }
+
+        public List<BrokenServer> getAllServers() {
+            return List.of();
+        }
+
+        public boolean getGatewayMode() {
+            return false;
+        }
+    }
+
+    public static final class BrokenServer {
+        public BrokenServer(String name) {
+        }
+
+        public String getName() {
+            return "broken";
+        }
+    }
+}

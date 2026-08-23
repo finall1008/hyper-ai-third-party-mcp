@@ -1,6 +1,11 @@
 package io.github.finall1008.xiaoaimcp.hook;
 
+import android.app.Application;
+import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.util.Log;
 
 import java.lang.ref.WeakReference;
@@ -20,6 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.github.finall1008.xiaoaimcp.BridgeContract;
+import io.github.finall1008.xiaoaimcp.TargetVersionPolicy;
 import io.github.finall1008.xiaoaimcp.config.McpConfigCodec;
 import io.github.finall1008.xiaoaimcp.config.McpServer;
 import io.github.libxposed.api.XposedInterface;
@@ -28,16 +34,12 @@ import io.github.libxposed.api.XposedModuleInterface;
 
 public final class XiaoAiMcpModule extends XposedModule {
     private static final String TAG = "XiaoAiMcpBridge";
-    private static final String PERSONAL_MCP_MANAGER = "l8.w1";
-    private static final String READ_CONFIG_OBJECT_METHOD = "A";
-    private static final String READ_CONFIG_METHOD = "J";
-    private static final String SYNC_METHOD = "syncConfigAndDiscoverIfNeeded";
-    private static final String RELOAD_METHOD = "reloadConfig";
 
     private final AtomicReference<WeakReference<Object>> managerReference =
             new AtomicReference<>(new WeakReference<>(null));
     private final AtomicBoolean reloadInFlight = new AtomicBoolean(false);
     private final AtomicBoolean reloadPending = new AtomicBoolean(false);
+    private final AtomicBoolean initializationStarted = new AtomicBoolean(false);
     private final ExecutorService reloadExecutor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "xiaoai-mcp-reload");
         thread.setDaemon(true);
@@ -46,6 +48,7 @@ public final class XiaoAiMcpModule extends XposedModule {
 
     private volatile SharedPreferences remotePreferences;
     private volatile boolean targetProcess;
+    private volatile XposedInterface.HookHandle bootstrapHook;
     private volatile Method reloadMethod;
     private volatile Constructor<?> hostServerConfigConstructor;
     private volatile Constructor<?> hostServersConfigConstructor;
@@ -69,7 +72,7 @@ public final class XiaoAiMcpModule extends XposedModule {
     }
 
     @Override
-    public void onPackageReady(XposedModuleInterface.PackageReadyParam param) {
+    public void onPackageLoaded(XposedModuleInterface.PackageLoadedParam param) {
         if (!targetProcess
                 || !param.isFirstPackage()
                 || !BridgeContract.TARGET_PACKAGE.equals(param.getPackageName())) {
@@ -77,138 +80,217 @@ public final class XiaoAiMcpModule extends XposedModule {
         }
 
         try {
-            remotePreferences = getRemotePreferences(BridgeContract.PREF_GROUP);
-            installPreferenceListener();
-            installHooks(param.getClassLoader());
-            log(Log.INFO, TAG, "Hooks installed after exact target signature verification for XiaoAi "
-                    + BridgeContract.TARGET_VERSION_NAME + " (" + BridgeContract.TARGET_VERSION_CODE + ")");
+            Method attach = Application.class.getDeclaredMethod("attach", Context.class);
+            bootstrapHook = hook(attach)
+                    .setId("xiaoai-mcp-bootstrap")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        boolean initialize = initializationStarted.compareAndSet(false, true);
+                        if (initialize) {
+                            try {
+                                initializeForApplication((Context) chain.getArg(0));
+                            } catch (Throwable error) {
+                                log(Log.ERROR, TAG,
+                                        "Hook initialization failed; host behavior is unchanged",
+                                        error);
+                                detach();
+                            }
+                        }
+                        try {
+                            return chain.proceed();
+                        } finally {
+                            if (initialize) {
+                                XposedInterface.HookHandle handle = bootstrapHook;
+                                bootstrapHook = null;
+                                if (handle != null) {
+                                    try {
+                                        handle.unhook();
+                                    } catch (Throwable error) {
+                                        log(Log.WARN, TAG, "Unable to remove bootstrap hook", error);
+                                    }
+                                }
+                            }
+                        }
+                    });
         } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Hook installation failed; host behavior is unchanged", error);
+            log(Log.ERROR, TAG, "Unable to install target application bootstrap", error);
             detach();
         }
     }
 
-    private void installHooks(ClassLoader hostClassLoader) throws Exception {
-        Class<?> managerClass = Class.forName(PERSONAL_MCP_MANAGER, false, hostClassLoader);
-        Method readConfigMethod = managerClass.getDeclaredMethod(READ_CONFIG_METHOD);
-        Class<?> serverConfigClass = Class.forName("r8.h", false, hostClassLoader);
-        Class<?> connectionConfigClass = Class.forName("r8.i", false, hostClassLoader);
-        Class<?> serversConfigClass = Class.forName("r8.k", false, hostClassLoader);
-        Method readConfigObjectMethod = managerClass.getDeclaredMethod(READ_CONFIG_OBJECT_METHOD);
-        Method syncMethod = managerClass.getDeclaredMethod(SYNC_METHOD);
-        Class<?> continuation = Class.forName(
-                "kotlin.coroutines.Continuation",
-                false,
-                hostClassLoader
-        );
-        Method hostReloadMethod = managerClass.getDeclaredMethod(RELOAD_METHOD, continuation);
-        Method loadCatalogMethod = managerClass.getDeclaredMethod(
-                "loadCatalogAndRegister",
-                continuation
-        );
-
-        Constructor<?> serverConstructor = serverConfigClass.getDeclaredConstructor(
-                String.class,
-                String.class,
-                connectionConfigClass,
-                String.class,
-                String.class,
-                List.class,
-                Map.class,
-                String.class,
-                boolean.class,
-                Map.class,
-                Long.class,
-                int.class,
-                boolean.class,
-                boolean.class,
-                List.class,
-                String.class,
-                String.class
-        );
-        Constructor<?> serversConstructor = serversConfigClass.getDeclaredConstructor(
-                List.class,
-                Map.class,
-                boolean.class
-        );
-        Method getAllServers = serversConfigClass.getDeclaredMethod("getAllServers");
-        Method getGatewayMode = serversConfigClass.getDeclaredMethod("getGatewayMode");
-        Method getServerName = serverConfigClass.getDeclaredMethod("getName");
-
-        if (readConfigMethod.getParameterCount() != 0
-                || readConfigMethod.getReturnType() != String.class
-                || readConfigObjectMethod.getParameterCount() != 0
-                || readConfigObjectMethod.getReturnType() != serversConfigClass
-                || syncMethod.getParameterCount() != 0
-                || syncMethod.getReturnType() != void.class
-                || hostReloadMethod.getReturnType() != Object.class
-                || loadCatalogMethod.getReturnType() != Object.class) {
-            throw new NoSuchMethodException("Unexpected PersonalMcpManager method signature");
+    @SuppressWarnings("deprecation")
+    private void initializeForApplication(Context context) throws Exception {
+        PackageInfo packageInfo;
+        try {
+            packageInfo = context.getPackageManager().getPackageInfo(
+                    BridgeContract.TARGET_PACKAGE,
+                    0
+            );
+        } catch (PackageManager.NameNotFoundException error) {
+            throw new IllegalStateException("Target package information is unavailable", error);
+        }
+        String versionName = packageInfo.versionName;
+        if (!TargetVersionPolicy.isSupported(versionName)) {
+            log(Log.WARN, TAG, "XiaoAi " + String.valueOf(versionName)
+                    + " is below or outside the supported 8.0+ version range; no hooks installed");
+            detach();
+            return;
         }
 
-        Class<?> emptyContextClass = Class.forName(
-                "kotlin.coroutines.EmptyCoroutineContext",
-                false,
-                hostClassLoader
+        ApplicationInfo applicationInfo = packageInfo.applicationInfo != null
+                ? packageInfo.applicationInfo
+                : context.getApplicationInfo();
+        ClassLoader hostClassLoader = context.getClassLoader();
+        ResolvedHookTargets targets = HookTargetResolver.resolve(
+                hostClassLoader,
+                new DexClassCatalog(applicationInfo)
         );
-        Field instanceField = emptyContextClass.getField("INSTANCE");
-        Object emptyContext = instanceField.get(null);
-        Class<?> intrinsics = Class.forName(
-                "kotlin.coroutines.intrinsics.IntrinsicsKt",
-                false,
-                hostClassLoader
-        );
-        Object suspended = intrinsics.getMethod("getCOROUTINE_SUSPENDED").invoke(null);
+        remotePreferences = getRemotePreferences(BridgeContract.PREF_GROUP);
+        installHooks(hostClassLoader, targets);
+        log(Log.INFO, TAG, "XiaoAi " + versionName + " accepted (minimum 8.0); resolver="
+                + targets.mode());
+    }
 
-        hostContinuationClass = continuation;
-        hostEmptyCoroutineContext = emptyContext;
-        hostCoroutineSuspended = suspended;
-        reloadMethod = hostReloadMethod;
-        hostServerConfigConstructor = serverConstructor;
-        hostServersConfigConstructor = serversConstructor;
-        hostConfigGetAllServers = getAllServers;
-        hostConfigGetGatewayMode = getGatewayMode;
-        hostServerGetName = getServerName;
+    private void installHooks(ClassLoader hostClassLoader, ResolvedHookTargets targets)
+            throws Exception {
+        ObjectConfigAdapter adapter = targets.objectAdapter();
+        if (adapter != null) {
+            hostServerConfigConstructor = adapter.serverConstructor();
+            hostServersConfigConstructor = adapter.serversConstructor();
+            hostConfigGetAllServers = adapter.getAllServers();
+            hostConfigGetGatewayMode = adapter.getGatewayMode();
+            hostServerGetName = adapter.getServerName();
+        }
 
-        boolean syncDeoptimized = deoptimize(syncMethod);
-        boolean reloadDeoptimized = deoptimize(hostReloadMethod);
-        boolean catalogDeoptimized = deoptimize(loadCatalogMethod);
+        boolean syncDeoptimized = tryDeoptimize(targets.syncMethod());
+        boolean reloadDeoptimized = tryDeoptimize(targets.reloadMethod());
+        boolean catalogDeoptimized = tryDeoptimize(targets.loadCatalogMethod());
         log(Log.INFO, TAG, "Targeted deoptimization: sync=" + syncDeoptimized
                 + ", reload=" + reloadDeoptimized + ", catalog=" + catalogDeoptimized);
-        if (!syncDeoptimized || !reloadDeoptimized || !catalogDeoptimized) {
-            throw new IllegalStateException("Unable to deoptimize MCP config callers");
+
+        boolean textInstalled = installTextHook(targets.textConfigMethod());
+        boolean objectInstalled = installObjectHook(
+                targets.hasObjectConfig() ? targets.objectConfigMethod() : null);
+        if (!textInstalled && !objectInstalled) {
+            throw new IllegalStateException("No MCP config reader hook could be installed");
         }
 
-        hook(readConfigMethod)
-                .setId("xiaoai-mcp-config-merge")
-                .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
-                .intercept(chain -> {
-                    Object original = chain.proceed();
-                    if (!(original instanceof String hostConfig)) {
-                        return original;
-                    }
-                    return mergeConfiguredServers(hostConfig);
-                });
+        boolean reloadInstalled = prepareReload(hostClassLoader, targets)
+                && installManagerCaptureHook(targets.syncMethod());
+        if (reloadInstalled) {
+            try {
+                installPreferenceListener();
+            } catch (Throwable error) {
+                log(Log.ERROR, TAG,
+                        "Preference listener unavailable; configuration applies next startup",
+                        error);
+                reloadMethod = null;
+                reloadInstalled = false;
+            }
+        }
+        log(Log.INFO, TAG, "Hook capabilities: text=" + textInstalled
+                + ", object=" + objectInstalled + ", liveReload=" + reloadInstalled);
+    }
 
-        hook(readConfigObjectMethod)
-                .setId("xiaoai-mcp-config-object-merge")
-                .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
-                .intercept(chain -> mergeConfiguredServerObjects(chain.proceed()));
+    private boolean installTextHook(Method method) {
+        if (method == null) {
+            return false;
+        }
+        try {
+            hook(method)
+                    .setId("xiaoai-mcp-config-merge")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object original = chain.proceed();
+                        if (!(original instanceof String hostConfig)) {
+                            return original;
+                        }
+                        return mergeConfiguredServers(hostConfig);
+                    });
+            return true;
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Text config hook unavailable", error);
+            return false;
+        }
+    }
 
-        hook(syncMethod)
-                .setId("xiaoai-mcp-manager-capture")
-                .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
-                .intercept(chain -> {
-                    Object manager = chain.getThisObject();
-                    if (manager != null) {
-                        managerReference.set(new WeakReference<>(manager));
-                    }
-                    Object result = chain.proceed();
-                    if (reloadPending.get()) {
-                        requestReload();
-                    }
-                    return result;
-                });
+    private boolean installObjectHook(Method method) {
+        if (method == null) {
+            return false;
+        }
+        try {
+            hook(method)
+                    .setId("xiaoai-mcp-config-object-merge")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> mergeConfiguredServerObjects(chain.proceed()));
+            return true;
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Object config hook unavailable", error);
+            return false;
+        }
+    }
+
+    private boolean prepareReload(ClassLoader hostClassLoader, ResolvedHookTargets targets) {
+        if (targets.syncMethod() == null || targets.reloadMethod() == null) {
+            return false;
+        }
+        try {
+            Class<?> emptyContextClass = Class.forName(
+                    "kotlin.coroutines.EmptyCoroutineContext",
+                    false,
+                    hostClassLoader
+            );
+            Field instanceField = emptyContextClass.getField("INSTANCE");
+            Class<?> intrinsics = Class.forName(
+                    "kotlin.coroutines.intrinsics.IntrinsicsKt",
+                    false,
+                    hostClassLoader
+            );
+            hostContinuationClass = targets.continuationClass();
+            hostEmptyCoroutineContext = instanceField.get(null);
+            hostCoroutineSuspended = intrinsics.getMethod("getCOROUTINE_SUSPENDED").invoke(null);
+            reloadMethod = targets.reloadMethod();
+            return true;
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Live reload coroutine adapter unavailable", error);
+            return false;
+        }
+    }
+
+    private boolean installManagerCaptureHook(Method method) {
+        try {
+            hook(method)
+                    .setId("xiaoai-mcp-manager-capture")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object manager = chain.getThisObject();
+                        if (manager != null) {
+                            managerReference.set(new WeakReference<>(manager));
+                        }
+                        Object result = chain.proceed();
+                        if (reloadPending.get()) {
+                            requestReload();
+                        }
+                        return result;
+                    });
+            return true;
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Live reload manager capture unavailable", error);
+            reloadMethod = null;
+            return false;
+        }
+    }
+
+    private boolean tryDeoptimize(Method method) {
+        if (method == null) {
+            return false;
+        }
+        try {
+            return deoptimize(method);
+        } catch (Throwable error) {
+            log(Log.WARN, TAG, "Unable to deoptimize " + method, error);
+            return false;
+        }
     }
 
     private String mergeConfiguredServers(String hostConfig) {
