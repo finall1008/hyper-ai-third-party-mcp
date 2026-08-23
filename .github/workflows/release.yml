@@ -18,12 +18,6 @@ jobs:
   publish:
     name: Build and publish APK
     runs-on: ubuntu-latest
-    env:
-      RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
-      XIAOAI_RELEASE_STORE_FILE: ${{ github.workspace }}/release-keystore.jks
-      XIAOAI_RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
-      XIAOAI_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-      XIAOAI_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
 
     steps:
       - name: Check out repository
@@ -46,19 +40,44 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Check release signing configuration
+        id: signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && \
+             [ -n "$RELEASE_STORE_PASSWORD" ] && \
+             [ -n "$RELEASE_KEY_ALIAS" ] && \
+             [ -n "$RELEASE_KEY_PASSWORD" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Decode release keystore
-        if: env.RELEASE_KEYSTORE_BASE64 != ''
+        if: steps.signing.outputs.configured == 'true'
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          XIAOAI_RELEASE_STORE_FILE: ${{ runner.temp }}/release-keystore.jks
         run: printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$XIAOAI_RELEASE_STORE_FILE"
 
       - name: Build release APK
+        env:
+          XIAOAI_RELEASE_STORE_FILE: ${{ runner.temp }}/release-keystore.jks
+          XIAOAI_RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          XIAOAI_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          XIAOAI_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew --no-daemon assembleRelease
 
+      - name: Remove release keystore
+        if: always()
+        run: rm -f "${{ runner.temp }}/release-keystore.jks"
+
       - name: Publish APK to GitHub Release
-        if: >-
-          env.RELEASE_KEYSTORE_BASE64 != '' &&
-          env.XIAOAI_RELEASE_STORE_PASSWORD != '' &&
-          env.XIAOAI_RELEASE_KEY_ALIAS != '' &&
-          env.XIAOAI_RELEASE_KEY_PASSWORD != ''
+        if: steps.signing.outputs.configured == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
