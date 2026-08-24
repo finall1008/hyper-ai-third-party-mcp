@@ -8,12 +8,15 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.util.Log;
 
+import java.io.File;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -26,6 +29,10 @@ import io.github.finall1008.xiaoaimcp.BridgeContract;
 import io.github.finall1008.xiaoaimcp.TargetVersionPolicy;
 import io.github.finall1008.xiaoaimcp.config.McpConfigCodec;
 import io.github.finall1008.xiaoaimcp.config.McpServer;
+import io.github.finall1008.xiaoaimcp.filepolicy.FilePolicyCodec;
+import io.github.finall1008.xiaoaimcp.filepolicy.FilePolicyConfig;
+import io.github.finall1008.xiaoaimcp.filepolicy.LockscreenFileAccessEvaluator;
+import io.github.finall1008.xiaoaimcp.filepolicy.PathPolicyEvaluator;
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.XposedModuleInterface;
@@ -38,6 +45,9 @@ public final class XiaoAiMcpModule extends XposedModule {
     private final AtomicBoolean reloadInFlight = new AtomicBoolean(false);
     private final AtomicBoolean reloadPending = new AtomicBoolean(false);
     private final AtomicBoolean initializationStarted = new AtomicBoolean(false);
+    private final AtomicBoolean invalidFilePolicyLogged = new AtomicBoolean(false);
+    private final ThreadLocal<ArrayDeque<String>> fileAgentContext =
+            ThreadLocal.withInitial(ArrayDeque::new);
     private final ExecutorService reloadExecutor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "xiaoai-mcp-reload");
         thread.setDaemon(true);
@@ -137,14 +147,27 @@ public final class XiaoAiMcpModule extends XposedModule {
                 ? packageInfo.applicationInfo
                 : context.getApplicationInfo();
         ClassLoader hostClassLoader = context.getClassLoader();
-        ResolvedHookTargets targets = HookTargetResolver.resolve(
-                hostClassLoader,
-                new DexClassCatalog(applicationInfo)
-        );
+        ClassCatalog catalog = new CachingClassCatalog(new DexClassCatalog(applicationInfo));
         remotePreferences = getRemotePreferences(BridgeContract.PREF_GROUP);
-        installHooks(targets);
-        log(Log.INFO, TAG, "XiaoAi " + versionName + " accepted (minimum 8.0); resolver="
-                + targets.mode());
+
+        boolean mcpInstalled = false;
+        String mcpResolver = "unavailable";
+        try {
+            ResolvedHookTargets targets = HookTargetResolver.resolve(hostClassLoader, catalog);
+            installHooks(targets);
+            mcpInstalled = true;
+            mcpResolver = targets.mode();
+        } catch (Throwable error) {
+            log(Log.WARN, TAG,
+                    "MCP targets unavailable; independently resolved file-policy hooks remain eligible",
+                    error);
+        }
+        boolean filePolicyInstalled = installFilePolicyHooks(hostClassLoader, catalog);
+        if (!mcpInstalled && !filePolicyInstalled) {
+            throw new IllegalStateException("No compatible MCP or file-policy capability found");
+        }
+        log(Log.INFO, TAG, "XiaoAi " + versionName + " accepted (minimum 8.0); mcp="
+                + mcpResolver + ", filePolicy=" + filePolicyInstalled);
     }
 
     private void installHooks(ResolvedHookTargets targets) throws Exception {
@@ -185,6 +208,314 @@ public final class XiaoAiMcpModule extends XposedModule {
         }
         log(Log.INFO, TAG, "Hook capabilities: text=" + textInstalled
                 + ", object=" + objectInstalled + ", liveReload=" + reloadInstalled);
+    }
+
+    private boolean installFilePolicyHooks(ClassLoader classLoader, ClassCatalog catalog) {
+        FilePolicyHookTargets targets;
+        try {
+            targets = FilePolicyHookResolver.resolve(classLoader, catalog);
+        } catch (Throwable error) {
+            log(Log.WARN, TAG,
+                    "File-policy targets unavailable; MCP hooks remain active and host file policy is unchanged",
+                    error);
+            return false;
+        }
+
+        boolean mutationInstalled = targets.hasMutationPolicy()
+                && installExternalMutationHooks(targets);
+        boolean lockscreenInstalled = targets.hasLockscreenPolicy()
+                && installLockscreenFileHooks(targets);
+        boolean confirmationInstalled = targets.hasConfirmationPolicy()
+                && installMutationConfirmationHook(targets);
+        log(Log.INFO, TAG, "File-policy capabilities: resolver=" + targets.mode()
+                + ", mutation=" + mutationInstalled
+                + ", lockscreen=" + lockscreenInstalled
+                + ", confirmation=" + confirmationInstalled);
+        return mutationInstalled || lockscreenInstalled || confirmationInstalled;
+    }
+
+    private boolean installExternalMutationHooks(FilePolicyHookTargets targets) {
+        try {
+            for (Method callSite : targets.uriCallSites()) {
+                tryDeoptimize(callSite);
+            }
+            hook(targets.uriResolve())
+                    .setId("xiaoai-file-policy-agent-context")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object value = chain.getArg(1);
+                        String agentId = value instanceof String ? (String) value : "";
+                        ArrayDeque<String> stack = fileAgentContext.get();
+                        stack.push(agentId);
+                        try {
+                            return chain.proceed();
+                        } finally {
+                            stack.pop();
+                            if (stack.isEmpty()) {
+                                fileAgentContext.remove();
+                            }
+                        }
+                    });
+            hook(targets.externalUserAssetCheck())
+                    .setId("xiaoai-file-policy-existing-mutation")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object original = chain.proceed();
+                        if (!(original instanceof Boolean) || !((Boolean) original)) {
+                            return original;
+                        }
+                        Object rawPath = chain.getArg(0);
+                        if (!(rawPath instanceof String path)) {
+                            return original;
+                        }
+                        ArrayDeque<String> stack = fileAgentContext.get();
+                        String agentId = stack.peek();
+                        if (agentId == null) {
+                            return original;
+                        }
+                        try {
+                            if (PathPolicyEvaluator.canMutate(
+                                    loadFilePolicy(), new File(path), agentId)) {
+                                log(Log.INFO, TAG, "Allowed existing external file mutation: path="
+                                        + new File(path).getCanonicalPath()
+                                        + ", agent=" + redactAgentId(agentId));
+                                return false;
+                            }
+                        } catch (Throwable error) {
+                            log(Log.WARN, TAG,
+                                    "Existing external file mutation policy check failed", error);
+                        }
+                        return original;
+                    });
+            return true;
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Existing external file mutation hooks unavailable", error);
+            return false;
+        }
+    }
+
+    private boolean installLockscreenFileHooks(FilePolicyHookTargets targets) {
+        try {
+            for (Method callSite
+                    : targets.lockscreenToolAllowed().getDeclaringClass().getDeclaredMethods()) {
+                tryDeoptimize(callSite);
+            }
+            for (Method matcher : targets.lockscreenCliMatchers()) {
+                hook(matcher)
+                        .setId("xiaoai-file-policy-lockscreen-cli-" + matcher.getName())
+                        .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Object original = chain.proceed();
+                            if (Boolean.TRUE.equals(original)) {
+                                return true;
+                            }
+                            Object rawCommand = chain.getArg(0);
+                            Object rawArgs = chain.getArg(1);
+                            if (!(rawCommand instanceof String command)
+                                    || !(rawArgs instanceof List<?> arguments)) {
+                                return original;
+                            }
+                            List<String> stringArgs = new ArrayList<>(arguments.size());
+                            for (Object argument : arguments) {
+                                if (!(argument instanceof String value)) {
+                                    return original;
+                                }
+                                stringArgs.add(value);
+                            }
+                            if (LockscreenFileAccessEvaluator.isCliCommandAllowed(
+                                    loadFilePolicy(), command, stringArgs)) {
+                                log(Log.INFO, TAG,
+                                        "Allowed lockscreen file CLI command: " + command);
+                                return true;
+                            }
+                            return original;
+                        });
+            }
+            hook(targets.lockscreenToolAllowed())
+                    .setId("xiaoai-file-policy-lockscreen-tool")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object original = chain.proceed();
+                        if (Boolean.TRUE.equals(original)) {
+                            return true;
+                        }
+                        Object toolCall = chain.getArg(0);
+                        if (toolCall == null) {
+                            return original;
+                        }
+                        Object rawName = targets.toolCallGetName().invoke(toolCall);
+                        Object rawArguments = targets.toolCallGetArguments().invoke(toolCall);
+                        if (!(rawName instanceof String toolName)
+                                || !(rawArguments instanceof Map<?, ?> arguments)) {
+                            return original;
+                        }
+                        Map<String, String> stringArguments = stringifyJsonArguments(arguments);
+                        if (LockscreenFileAccessEvaluator.isDirectToolAllowed(
+                                loadFilePolicy(), toolName, stringArguments)) {
+                            log(Log.INFO, TAG,
+                                    "Allowed lockscreen direct file tool: " + toolName);
+                            return true;
+                        }
+                        return original;
+                    });
+            return true;
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "Lockscreen file hooks unavailable", error);
+            return false;
+        }
+    }
+
+    private boolean installMutationConfirmationHook(FilePolicyHookTargets targets) {
+        try {
+            for (Method callSite
+                    : targets.riskFileExemption().getDeclaringClass().getDeclaredMethods()) {
+                tryDeoptimize(callSite);
+            }
+            hook(targets.riskFileExemption())
+                    .setId("xiaoai-file-policy-mutation-confirmation")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object original = chain.proceed();
+                        if (Boolean.TRUE.equals(original)) {
+                            return true;
+                        }
+                        Object rawPaths = chain.getArg(0);
+                        Object context = chain.getArg(1);
+                        if (!(rawPaths instanceof List<?> values) || context == null) {
+                            return original;
+                        }
+                        List<String> paths = new ArrayList<>();
+                        for (Object value : values) {
+                            if (!(value instanceof String path)) {
+                                return original;
+                            }
+                            addUniquePath(paths, path);
+                        }
+                        Object move = chain.getArg(2);
+                        if (move != null) {
+                            addReflectedPath(paths, targets.riskMoveGetFirst().invoke(move));
+                            addReflectedPath(paths, targets.riskMoveGetSecond().invoke(move));
+                        }
+                        Object rawAgentId = targets.riskContextGetAgentId().invoke(context);
+                        if (!(rawAgentId instanceof String agentId)) {
+                            return original;
+                        }
+                        String executionIdentity = resolveExecutionIdentity(
+                                targets, context, agentId);
+                        if (PathPolicyEvaluator.canSkipMutationConfirmation(
+                                loadFilePolicy(), paths, executionIdentity)) {
+                            log(Log.INFO, TAG,
+                                    "Automatically authorized file mutation confirmation: paths="
+                                            + paths.size() + ", agent="
+                                            + redactAgentId(executionIdentity));
+                            return true;
+                        }
+                        log(Log.INFO, TAG,
+                                "Retained host file mutation confirmation: paths=" + paths.size()
+                                        + ", agent=" + redactAgentId(executionIdentity)
+                                        + ", background="
+                                        + PathPolicyEvaluator.isBackgroundAgent(
+                                                executionIdentity));
+                        return original;
+                    });
+            return true;
+        } catch (Throwable error) {
+            log(Log.ERROR, TAG, "File mutation confirmation hook unavailable", error);
+            return false;
+        }
+    }
+
+    private static void addReflectedPath(List<String> paths, Object value) {
+        if (value instanceof String path) {
+            addUniquePath(paths, path);
+        }
+    }
+
+    private static String resolveExecutionIdentity(
+            FilePolicyHookTargets targets,
+            Object context,
+            String agentId
+    ) throws Exception {
+        Object rawSharedState = targets.riskContextGetSharedState().invoke(context);
+        if (rawSharedState instanceof Map<?, ?> sharedState) {
+            Object rawAgentSubId = sharedState.get("agentSubId");
+            if (rawAgentSubId instanceof String agentSubId && !agentSubId.isBlank()) {
+                if (PathPolicyEvaluator.isBackgroundAgent(agentSubId)) {
+                    return agentSubId;
+                }
+                agentId = agentSubId;
+            }
+        }
+        Object rawSessionId = targets.riskContextGetSessionId().invoke(context);
+        if (rawSessionId instanceof String sessionId
+                && PathPolicyEvaluator.isBackgroundAgent(sessionId)) {
+            return sessionId;
+        }
+        return agentId;
+    }
+
+    private static void addUniquePath(List<String> paths, String path) {
+        if (!path.isBlank() && !paths.contains(path)) {
+            paths.add(path);
+        }
+    }
+
+    private FilePolicyConfig loadFilePolicy() {
+        SharedPreferences preferences = remotePreferences;
+        if (preferences == null) {
+            return FilePolicyConfig.disabled();
+        }
+        try {
+            String json = preferences.getString(
+                    BridgeContract.PREF_FILE_POLICY_JSON,
+                    FilePolicyCodec.emptyConfig()
+            );
+            FilePolicyConfig config = FilePolicyCodec.parse(json);
+            invalidFilePolicyLogged.set(false);
+            return config;
+        } catch (Throwable error) {
+            if (invalidFilePolicyLogged.compareAndSet(false, true)) {
+                log(Log.ERROR, TAG,
+                        "Invalid file policy ignored; host restrictions remain active", error);
+            }
+            return FilePolicyConfig.disabled();
+        }
+    }
+
+    private static Map<String, String> stringifyJsonArguments(Map<?, ?> arguments) {
+        Map<String, String> result = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : arguments.entrySet()) {
+            if (!(entry.getKey() instanceof String key) || entry.getValue() == null) {
+                continue;
+            }
+            String value = jsonContent(entry.getValue());
+            if (value != null) {
+                result.put(key, value);
+            }
+        }
+        return result;
+    }
+
+    private static String jsonContent(Object value) {
+        if (value instanceof String text) {
+            return text;
+        }
+        try {
+            Method getContent = value.getClass().getMethod("getContent");
+            Object content = getContent.invoke(value);
+            return content instanceof String ? (String) content : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static String redactAgentId(String agentId) {
+        int isolated = agentId.indexOf("::");
+        if (isolated < 0) {
+            return agentId;
+        }
+        return agentId.substring(0, isolated)
+                + (PathPolicyEvaluator.isBackgroundAgent(agentId) ? "::bg/..." : "::...");
     }
 
     private boolean installTextHook(Method method) {

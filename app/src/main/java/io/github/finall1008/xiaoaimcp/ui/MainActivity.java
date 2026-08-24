@@ -41,6 +41,7 @@ public final class MainActivity extends Activity
     private TextView targetStatus;
     private TextView emptyView;
     private Button addButton;
+    private Button filePolicyButton;
     private ServerAdapter adapter;
     private RemoteConfigRepository repository;
 
@@ -103,6 +104,15 @@ public final class MainActivity extends Activity
         buttonParams.topMargin = UiSupport.dp(this, 12);
         root.addView(addButton, buttonParams);
 
+        filePolicyButton = new Button(this);
+        filePolicyButton.setText("文件访问权限");
+        filePolicyButton.setAllCaps(false);
+        filePolicyButton.setOnClickListener(v -> startActivity(
+                new Intent(this, FilePolicyActivity.class)));
+        LinearLayout.LayoutParams filePolicyParams = UiSupport.matchWrap();
+        filePolicyParams.topMargin = UiSupport.dp(this, 8);
+        root.addView(filePolicyButton, filePolicyParams);
+
         emptyView = UiSupport.text(this, "尚未添加第三方 MCP 服务器", 15);
         emptyView.setGravity(Gravity.CENTER);
         emptyView.setTextColor(Color.rgb(120, 125, 138));
@@ -150,6 +160,7 @@ public final class MainActivity extends Activity
         boolean targetReady = updateTargetStatus();
         boolean editingEnabled = serviceReady && targetReady;
         addButton.setEnabled(editingEnabled);
+        filePolicyButton.setEnabled(editingEnabled);
         adapter.setEditingEnabled(editingEnabled);
 
         SharedPreferences preferences = serviceReady ? BridgeApplication.remotePreferences() : null;

@@ -10,6 +10,8 @@ public final class BridgeContract {
     public static final int CONFIG_SCHEMA_VERSION = 1;
     public static final String PREF_GROUP = "mcp_bridge";
     public static final String PREF_SERVERS_JSON = "servers_json";
+    public static final String PREF_FILE_POLICY_JSON = "file_policy_json";
+    public static final int FILE_POLICY_SCHEMA_VERSION = 2;
 
     private BridgeContract() {
     }

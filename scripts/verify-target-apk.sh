@@ -32,4 +32,15 @@ else
     echo "Verified-profile manager marker not found; runtime structural discovery is required."
 fi
 
+for MARKER in \
+    'isExternalUserAsset' \
+    'isCommandNameAllowed' \
+    'checkToolRisk'; do
+    if printf '%s\n' "$DEX_STRINGS" | rg -F -q "$MARKER"; then
+        echo "Found file-policy discovery marker: $MARKER"
+    else
+        echo "File-policy discovery marker not found: $MARKER; that capability may degrade independently." >&2
+    fi
+done
+
 echo "Compatibility markers found. Runtime structural resolution is still required."

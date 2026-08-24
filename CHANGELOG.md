@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Add user-controlled `/sdcard` directory rules for mutating existing files, lockscreen file
+  access, background/timer mutation, and lockscreen recursive deletion.
+- Resolve the file-storage and lockscreen policy targets with the same verified fast path plus
+  unique structural discovery used for newer XiaoAi 8.0+ versions; each capability fails closed
+  without disabling independently resolved MCP or file capabilities.
+- Canonicalize every requested path and apply the most-specific user-configured directory rule,
+  including explicit deny rules for narrower subdirectories.
+- Add per-directory confirmation modes for asking every time, automatically authorizing only
+  background/timer agents, or automatically authorizing all agents. Existing version 1 rules
+  migrate to ask-every-time behavior.
+- Discover and hook the host file-risk exemption independently, requiring every source and
+  destination path to match the selected confirmation mode without enabling the host's global
+  confirmation bypass.
+
 ## 1.1.1 - 2026-08-24
 
 - Derive the host coroutine continuation type from the resolved MCP methods instead of loading a
