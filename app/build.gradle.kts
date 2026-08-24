@@ -23,8 +23,8 @@ android {
         applicationId = "io.github.finall1008.xiaoaimcp"
         minSdk = 26
         targetSdk = 37
-        versionCode = 6
-        versionName = "1.1.1"
+        versionCode = 7
+        versionName = "1.2.0"
         testInstrumentationRunner = "android.app.Instrumentation"
     }
 
