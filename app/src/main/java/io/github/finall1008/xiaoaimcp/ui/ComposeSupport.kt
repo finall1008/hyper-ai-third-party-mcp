@@ -5,9 +5,12 @@ import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -15,11 +18,18 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -40,20 +50,35 @@ internal fun BridgeTheme(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             activity.window.isNavigationBarContrastEnforced = false
         }
+        @Suppress("DEPRECATION")
+        activity.window.navigationBarColor = Color.TRANSPARENT
         onDispose { }
     }
-    MiuixTheme(controller = controller, content = content)
+    MiuixTheme(controller = controller) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface),
+        ) {
+            content()
+        }
+    }
 }
 
 @Composable
 internal fun BackButton(onClick: () -> Unit) {
-    TextButton(
-        text = "‹",
+    val layoutDirection = LocalLayoutDirection.current
+    IconButton(
         onClick = onClick,
-        minWidth = 44.dp,
         modifier = Modifier.padding(start = 4.dp),
-        textStyle = MiuixTheme.textStyles.title4,
-    )
+    ) {
+        Icon(
+            imageVector = MiuixIcons.Back,
+            contentDescription = "返回",
+            modifier = Modifier.graphicsLayer {
+                if (layoutDirection == LayoutDirection.Rtl) scaleX = -1f
+            },
+            tint = MiuixTheme.colorScheme.onBackground,
+        )
+    }
 }
 
 @Composable

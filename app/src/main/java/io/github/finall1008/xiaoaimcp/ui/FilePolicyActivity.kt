@@ -38,11 +38,16 @@ import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Delete
+import top.yukonga.miuix.kmp.icon.extended.Edit
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.CheckboxLocation
 import top.yukonga.miuix.kmp.preference.CheckboxPreference
@@ -350,10 +355,22 @@ private fun RuleCard(
         if (editingEnabled) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
             ) {
-                TextButton(text = "编辑", onClick = onEdit)
-                TextButton(text = "删除", onClick = onDelete)
+                IconButton(onClick = onEdit) {
+                    Icon(
+                        imageVector = MiuixIcons.Edit,
+                        contentDescription = "编辑 ${rule.path()}",
+                        tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                    )
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        imageVector = MiuixIcons.Delete,
+                        contentDescription = "删除 ${rule.path()}",
+                        tint = MiuixTheme.colorScheme.error,
+                    )
+                }
             }
         }
     }
