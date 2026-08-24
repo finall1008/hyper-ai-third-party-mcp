@@ -11,6 +11,7 @@ import org.junit.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public final class HookTargetResolverTest {
     @Test
@@ -71,6 +72,59 @@ public final class HookTargetResolverTest {
 
         assertTrue(targets.hasTextConfig());
         assertFalse(targets.hasObjectConfig());
+    }
+
+    @Test
+    public void resolvesRenamedManagerFromUniqueDexKitMarkerHint() throws Exception {
+        String managerName = MarkerOnlyManager.class.getName();
+        DexDiscoveryHints hints = new DexDiscoveryHints(
+                List.of(managerName), Set.of(managerName), 1, 7L);
+
+        ResolvedHookTargets targets = HookTargetResolver.resolve(
+                HookTargetResolverTest.class.getClassLoader(),
+                List::of,
+                hints
+        );
+
+        assertEquals("dexkit-discovery", targets.mode());
+        assertEquals(MarkerOnlyManager.class, targets.managerClass());
+        assertTrue(targets.hasTextConfig());
+        assertNull(targets.reloadMethod());
+    }
+
+    @Test
+    public void ambiguousDexKitManagerHintsFallBackToStructuralDiscovery() throws Exception {
+        List<String> hintedNames = List.of(
+                MarkerOnlyManager.class.getName(),
+                SecondMarkerOnlyManager.class.getName()
+        );
+        DexDiscoveryHints hints = new DexDiscoveryHints(
+                hintedNames, Set.copyOf(hintedNames), 2, 9L);
+
+        ResolvedHookTargets targets = HookTargetResolver.resolve(
+                HookTargetResolverTest.class.getClassLoader(),
+                () -> List.of(TextOnlyManager.class.getName()),
+                hints
+        );
+
+        assertEquals("structural-discovery", targets.mode());
+        assertEquals(TextOnlyManager.class, targets.managerClass());
+    }
+
+    @Test
+    public void markerOnlyHintDoesNotOverrideDifferentStructuralManager() throws Exception {
+        String hintedName = MarkerOnlyManager.class.getName();
+        DexDiscoveryHints hints = new DexDiscoveryHints(
+                List.of(hintedName), Set.of(hintedName), 1, 3L);
+
+        ResolvedHookTargets targets = HookTargetResolver.resolve(
+                HookTargetResolverTest.class.getClassLoader(),
+                () -> List.of(TextOnlyManager.class.getName()),
+                hints
+        );
+
+        assertEquals("structural-discovery", targets.mode());
+        assertEquals(TextOnlyManager.class, targets.managerClass());
     }
 
     @Test
@@ -195,6 +249,18 @@ public final class HookTargetResolverTest {
 
     public static final class NoAnchors {
         public String config() {
+            return "{}";
+        }
+    }
+
+    public static final class MarkerOnlyManager {
+        public String renamedConfigReader() {
+            return "{}";
+        }
+    }
+
+    public static final class SecondMarkerOnlyManager {
+        public String anotherRenamedConfigReader() {
             return "{}";
         }
     }

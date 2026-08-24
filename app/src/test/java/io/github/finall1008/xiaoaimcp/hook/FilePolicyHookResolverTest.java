@@ -6,6 +6,7 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -66,6 +67,31 @@ public final class FilePolicyHookResolverTest {
 
         assertFalse(targets.hasMutationPolicy());
         assertFalse(targets.hasLockscreenPolicy());
+        assertTrue(targets.hasConfirmationPolicy());
+    }
+
+    @Test
+    public void mergesDexKitCandidatesWithIndependentStructuralFallbacks() throws Exception {
+        String mutationClass = RelocatedUriResolver.class.getName();
+        DexDiscoveryHints hints = new DexDiscoveryHints(
+                List.of(mutationClass), Set.of(), 2, 4L);
+        List<String> structuralClasses = List.of(
+                RelocatedLockscreenAllowlist.class.getName(),
+                RelocatedToolCall.class.getName(),
+                RelocatedRiskManager.class.getName(),
+                RelocatedRiskContext.class.getName(),
+                RelocatedMovePair.class.getName()
+        );
+
+        FilePolicyHookTargets targets = FilePolicyHookResolver.resolve(
+                FilePolicyHookResolverTest.class.getClassLoader(),
+                () -> structuralClasses,
+                hints
+        );
+
+        assertEquals("dexkit-discovery+structural-discovery", targets.mode());
+        assertTrue(targets.hasMutationPolicy());
+        assertTrue(targets.hasLockscreenPolicy());
         assertTrue(targets.hasConfirmationPolicy());
     }
 

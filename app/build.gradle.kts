@@ -81,6 +81,7 @@ dependencies {
     implementation("top.yukonga.miuix.kmp:miuix-ui:0.9.3")
     implementation("top.yukonga.miuix.kmp:miuix-preference:0.9.3")
     implementation("top.yukonga.miuix.kmp:miuix-icons:0.9.3")
+    implementation("org.luckypray:dexkit:2.2.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260814")

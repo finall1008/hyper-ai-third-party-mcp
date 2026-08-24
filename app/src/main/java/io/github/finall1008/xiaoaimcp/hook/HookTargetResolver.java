@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 final class HookTargetResolver {
     private static final String KNOWN_MANAGER = "l8.w1";
@@ -19,36 +20,68 @@ final class HookTargetResolver {
 
     private final ClassLoader classLoader;
     private final List<String> classNames;
+    private final Set<String> managerHints;
     private final Map<String, Class<?>> loadedClasses = new HashMap<>();
 
-    private HookTargetResolver(ClassLoader classLoader, List<String> classNames) {
+    private HookTargetResolver(ClassLoader classLoader, List<String> classNames,
+                               Set<String> managerHints) {
         this.classLoader = classLoader;
         this.classNames = classNames;
+        this.managerHints = managerHints;
     }
 
     static ResolvedHookTargets resolve(ClassLoader classLoader, ClassCatalog catalog)
             throws ResolutionException {
-        try {
-            HookTargetResolver resolver = new HookTargetResolver(classLoader, List.of());
-            ResolvedHookTargets known = resolver.resolveKnown();
-            if (known != null) {
-                return known;
-            }
-        } catch (Throwable ignored) {
-            // The verified profile is only a fast path. Structural discovery handles relocated names.
-        }
+        return resolve(classLoader, catalog, DexDiscoveryHints.empty());
+    }
 
+    static ResolvedHookTargets resolve(ClassLoader classLoader, ClassCatalog catalog,
+                                       DexDiscoveryHints hints) throws ResolutionException {
+        ResolvedHookTargets known = resolveKnown(classLoader);
+        if (known != null) {
+            return known;
+        }
+        ResolvedHookTargets dexKitTargets = null;
+        if (hints != null && !hints.isEmpty()) {
+            try {
+                dexKitTargets = new HookTargetResolver(classLoader, hints.classNames(),
+                        hints.mcpManagerClassNames()).resolveStructurally("dexkit-discovery");
+                if (dexKitTargets.hasAllCapabilities()) {
+                    return dexKitTargets;
+                }
+            } catch (Throwable ignored) {
+                // DexKit narrows candidates only. Full structural discovery remains the fallback.
+            }
+        }
         try {
-            HookTargetResolver resolver = new HookTargetResolver(classLoader, catalog.classNames());
-            return resolver.resolveStructurally();
+            ResolvedHookTargets structuralTargets = new HookTargetResolver(
+                    classLoader, catalog.classNames(), Set.of())
+                    .resolveStructurally("structural-discovery");
+            return dexKitTargets == null
+                    ? structuralTargets : dexKitTargets.withFallback(structuralTargets);
         } catch (ResolutionException error) {
+            if (dexKitTargets != null) {
+                return dexKitTargets;
+            }
             throw error;
         } catch (Throwable error) {
+            if (dexKitTargets != null) {
+                return dexKitTargets;
+            }
             throw new ResolutionException("Unable to inspect target classes", error);
         }
     }
 
-    private ResolvedHookTargets resolveKnown() {
+    static ResolvedHookTargets resolveKnown(ClassLoader classLoader) {
+        try {
+            return new HookTargetResolver(classLoader, List.of(), Set.of())
+                    .resolveKnownProfile();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private ResolvedHookTargets resolveKnownProfile() {
         try {
             Class<?> manager = load(KNOWN_MANAGER);
             Class<?> server = load(KNOWN_SERVER);
@@ -85,14 +118,16 @@ final class HookTargetResolver {
         }
     }
 
-    private ResolvedHookTargets resolveStructurally() throws ResolutionException {
+    private ResolvedHookTargets resolveStructurally(String mode) throws ResolutionException {
         List<Class<?>> managers = new ArrayList<>();
+        boolean hasUniqueManagerHint = managerHints.size() == 1;
         for (String className : classNames) {
             if (shouldSkip(className)) {
                 continue;
             }
             Class<?> candidate = tryLoad(className);
-            if (candidate != null && hasManagerAnchors(candidate)) {
+            boolean hintedManager = hasUniqueManagerHint && managerHints.contains(className);
+            if (candidate != null && (hintedManager || hasManagerAnchors(candidate))) {
                 managers.add(candidate);
             }
         }
@@ -140,7 +175,7 @@ final class HookTargetResolver {
             throw new ResolutionException("MCP manager has no uniquely resolvable config reader");
         }
         return new ResolvedHookTargets(
-                "structural-discovery",
+                mode,
                 manager,
                 text,
                 object,

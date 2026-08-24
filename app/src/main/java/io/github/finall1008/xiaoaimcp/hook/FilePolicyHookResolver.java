@@ -26,27 +26,55 @@ final class FilePolicyHookResolver {
 
     static FilePolicyHookTargets resolve(ClassLoader classLoader, ClassCatalog catalog)
             throws ResolutionException {
-        try {
-            FilePolicyHookTargets known = new FilePolicyHookResolver(
-                    classLoader, List.of()).resolveKnown();
-            if (known != null) {
-                return known;
-            }
-        } catch (Throwable ignored) {
-            // Stable names are only a fast path. Structural discovery remains authoritative.
-        }
+        return resolve(classLoader, catalog, DexDiscoveryHints.empty());
+    }
 
+    static FilePolicyHookTargets resolve(ClassLoader classLoader, ClassCatalog catalog,
+                                         DexDiscoveryHints hints) throws ResolutionException {
+        FilePolicyHookTargets known = resolveKnown(classLoader);
+        if (known != null) {
+            return known;
+        }
+        FilePolicyHookTargets dexKitTargets = null;
+        if (hints != null && !hints.isEmpty()) {
+            try {
+                dexKitTargets = new FilePolicyHookResolver(classLoader, hints.classNames())
+                        .resolveStructurally("dexkit-discovery");
+                if (dexKitTargets.hasAllCapabilities()) {
+                    return dexKitTargets;
+                }
+            } catch (Throwable ignored) {
+                // Candidate narrowing is optional. The complete DEX catalog remains authoritative.
+            }
+        }
+        FilePolicyHookTargets structuralTargets;
         try {
-            return new FilePolicyHookResolver(
-                    classLoader, catalog.classNames()).resolveStructurally();
+            structuralTargets = new FilePolicyHookResolver(classLoader, catalog.classNames())
+                    .resolveStructurally("structural-discovery");
         } catch (ResolutionException error) {
+            if (dexKitTargets != null) {
+                return dexKitTargets;
+            }
             throw error;
         } catch (Throwable error) {
+            if (dexKitTargets != null) {
+                return dexKitTargets;
+            }
             throw new ResolutionException("Unable to inspect file-policy target classes", error);
+        }
+        return dexKitTargets == null
+                ? structuralTargets : dexKitTargets.withFallback(structuralTargets);
+    }
+
+    static FilePolicyHookTargets resolveKnown(ClassLoader classLoader) {
+        try {
+            return new FilePolicyHookResolver(classLoader, List.of()).resolveKnownProfile();
+        } catch (Throwable ignored) {
+            return null;
         }
     }
 
-    private FilePolicyHookTargets resolveKnown() throws Exception {
+    private FilePolicyHookTargets resolveKnownProfile() throws Exception {
         Class<?> uriResolver = load(KNOWN_URI_RESOLVER);
         Class<?> storage = load(KNOWN_STORAGE);
         Class<?> allowlist = load(KNOWN_LOCKSCREEN_ALLOWLIST);
@@ -75,7 +103,7 @@ final class FilePolicyHookResolver {
                 allowed, List.of(cli, cliPublic), getName, getArguments, risk);
     }
 
-    private FilePolicyHookTargets resolveStructurally() throws ResolutionException {
+    private FilePolicyHookTargets resolveStructurally(String mode) throws ResolutionException {
         List<MutationCandidate> mutationCandidates = new ArrayList<>();
         List<LockscreenCandidate> lockscreenCandidates = new ArrayList<>();
         List<RiskCandidate> riskCandidates = new ArrayList<>();
@@ -115,7 +143,7 @@ final class FilePolicyHookResolver {
                             + ", confirmation=" + riskCandidates.size());
         }
         return new FilePolicyHookTargets(
-                "structural-discovery",
+                mode,
                 mutation == null ? null : accessible(mutation.resolve()),
                 mutation == null ? null : accessible(mutation.externalUserAsset()),
                 mutation == null ? List.of() : accessible(mutation.callSites()),
