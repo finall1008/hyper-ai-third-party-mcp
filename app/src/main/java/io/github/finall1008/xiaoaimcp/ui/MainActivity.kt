@@ -11,10 +11,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
@@ -218,6 +224,9 @@ private fun MainScreen(
     onDelete: (McpServer) -> Unit,
 ) {
     var pendingDelete by remember { mutableStateOf<McpServer?>(null) }
+    val navigationBarPadding = WindowInsets.navigationBars
+        .asPaddingValues()
+        .calculateBottomPadding()
     Scaffold(
         topBar = {
             SmallTopAppBar(
@@ -225,10 +234,16 @@ private fun MainScreen(
                 subtitle = "第三方 MCP 与文件权限配置",
             )
         },
+        contentWindowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                top = 12.dp,
+                end = 16.dp,
+                bottom = 12.dp + navigationBarPadding,
+            ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item { SectionLabel("运行状态") }
@@ -290,25 +305,25 @@ private fun MainScreen(
             }
             item { Spacer(Modifier.height(8.dp)) }
         }
+        ConfirmDialog(
+            show = pendingDelete != null,
+            title = "删除服务器",
+            message = pendingDelete?.let {
+                "确认删除 “${it.name()}”？超级小爱中的对应工具会在线注销。"
+            }.orEmpty(),
+            confirmText = "删除",
+            onDismiss = { pendingDelete = null },
+            onConfirm = {
+                pendingDelete?.let(onDelete)
+                pendingDelete = null
+            },
+        )
+        MessageDialog(
+            message = errorMessage,
+            title = "操作失败",
+            onDismiss = onDismissError,
+        )
     }
-    ConfirmDialog(
-        show = pendingDelete != null,
-        title = "删除服务器",
-        message = pendingDelete?.let {
-            "确认删除 “${it.name()}”？超级小爱中的对应工具会在线注销。"
-        }.orEmpty(),
-        confirmText = "删除",
-        onDismiss = { pendingDelete = null },
-        onConfirm = {
-            pendingDelete?.let(onDelete)
-            pendingDelete = null
-        },
-    )
-    MessageDialog(
-        message = errorMessage,
-        title = "操作失败",
-        onDismiss = onDismissError,
-    )
 }
 
 @Composable

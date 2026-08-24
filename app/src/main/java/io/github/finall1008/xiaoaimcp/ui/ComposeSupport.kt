@@ -2,6 +2,7 @@ package io.github.finall1008.xiaoaimcp.ui
 
 import android.database.ContentObserver
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -9,28 +10,30 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -58,21 +61,34 @@ internal fun BridgeTheme(
             if (useBoldText) styles.withFontWeight(FontWeight.Bold) else styles
         }
     }
-    DisposableEffect(darkMode) {
-        activity.enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { darkMode },
-            navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { darkMode },
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            activity.window.isNavigationBarContrastEnforced = false
-        }
-        @Suppress("DEPRECATION")
-        activity.window.navigationBarColor = Color.TRANSPARENT
-        onDispose { }
-    }
     MiuixTheme(controller = controller, textStyles = textStyles) {
+        val surfaceColor = MiuixTheme.colorScheme.surface
+        DisposableEffect(darkMode, surfaceColor) {
+            WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+            activity.enableEdgeToEdge(
+                statusBarStyle = SystemBarStyle.auto(
+                    Color.TRANSPARENT,
+                    Color.TRANSPARENT,
+                ) { darkMode },
+                navigationBarStyle = SystemBarStyle.auto(
+                    Color.TRANSPARENT,
+                    Color.TRANSPARENT,
+                ) { darkMode },
+            )
+            activity.window.setBackgroundDrawable(ColorDrawable(surfaceColor.toArgb()))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                @Suppress("DEPRECATION")
+                activity.window.navigationBarDividerColor = Color.TRANSPARENT
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                activity.window.isNavigationBarContrastEnforced = false
+            }
+            @Suppress("DEPRECATION")
+            activity.window.navigationBarColor = Color.TRANSPARENT
+            onDispose { }
+        }
         Box(
-            modifier = Modifier.fillMaxSize().background(MiuixTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxSize().background(surfaceColor),
         ) {
             content()
         }
@@ -183,18 +199,12 @@ internal fun MessageDialog(
             modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
             style = MiuixTheme.textStyles.body2,
         )
-        Row(
+        TextButton(
+            text = "确定",
+            onClick = onDismiss,
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Button(
-                onClick = onDismiss,
-                colors = ButtonDefaults.buttonColorsPrimary(),
-            ) {
-                Text("确定")
-            }
-        }
+            colors = ButtonDefaults.textButtonColorsPrimary(),
+        )
     }
 }
 
@@ -219,16 +229,20 @@ internal fun ConfirmDialog(
         )
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
-            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            TextButton(text = "取消", onClick = onDismiss)
-            Button(
+            TextButton(
+                text = "取消",
+                onClick = onDismiss,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(20.dp))
+            TextButton(
+                text = confirmText,
                 onClick = onConfirm,
-                colors = ButtonDefaults.buttonColorsPrimary(),
-            ) {
-                Text(confirmText)
-            }
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.textButtonColorsPrimary(),
+            )
         }
     }
 }
