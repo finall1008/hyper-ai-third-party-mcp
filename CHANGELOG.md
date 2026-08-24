@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.2.0 - 2026-08-24
+
 - Add DexKit 2.2.0 as an on-demand candidate index between the verified profile and the existing
   full structural scan, while keeping reflection uniqueness checks authoritative.
 - Resolve MCP marker, lifecycle, object-container, mutation, lockscreen, and confirmation class
@@ -10,6 +12,8 @@
   claim compatibility with an untested XiaoAi build.
 - Remove the obsolete release-time rejection of packaged `kotlin.coroutines` classes now that the
   Compose configuration UI legitimately depends on the Kotlin coroutine runtime.
+- Migrate the configuration App to MIUIX Compose with native navigation, hosted dialogs,
+  edge-to-edge insets, accessible bold text, and scroll-safe rule actions.
 - Add user-controlled `/sdcard` directory rules for mutating existing files, lockscreen file
   access, background/timer mutation, and lockscreen recursive deletion.
 - Resolve the file-storage and lockscreen policy targets with the same verified fast path plus
