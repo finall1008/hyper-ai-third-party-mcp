@@ -141,7 +141,6 @@ public final class PathPolicyEvaluatorTest {
     public void automaticConfirmationRequiresEveryExternalPath()
             throws Exception {
         File root = temporary.newFolder("authorized");
-        File outside = temporary.newFolder("outside");
         File directory = new File(root, "folder");
         assertTrue(directory.mkdir());
         FileAccessRule rule = new FileAccessRule(root.getPath(), true,
@@ -151,7 +150,7 @@ public final class PathPolicyEvaluatorTest {
 
         assertFalse(PathPolicyEvaluator.canSkipMutationConfirmation(config,
                 List.of(new File(root, "a.txt").getPath(),
-                        new File(outside, "b.txt").getPath()), "osbot.main"));
+                        "/storage/emulated/0/outside/b.txt"), "osbot.main"));
         assertTrue(PathPolicyEvaluator.canSkipMutationConfirmation(config,
                 List.of(directory.getPath()), "osbot.main"));
     }
