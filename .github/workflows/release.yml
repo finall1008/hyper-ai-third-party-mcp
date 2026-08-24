@@ -64,13 +64,24 @@ jobs:
           XIAOAI_RELEASE_STORE_FILE: ${{ runner.temp }}/release-keystore.jks
         run: printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$XIAOAI_RELEASE_STORE_FILE"
 
-      - name: Build release APK
+      - name: Test and build release APK
         env:
           XIAOAI_RELEASE_STORE_FILE: ${{ runner.temp }}/release-keystore.jks
           XIAOAI_RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           XIAOAI_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           XIAOAI_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-        run: ./gradlew --no-daemon assembleRelease
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease
+
+      - name: Verify minimized module artifact
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          MAPPING=app/build/outputs/mapping/release/mapping.txt
+          unzip -t "$APK"
+          test -s "$MAPPING"
+          if grep -q '^kotlin\.coroutines\.' "$MAPPING"; then
+            echo "Release APK contains module-local kotlin.coroutines runtime classes" >&2
+            exit 1
+          fi
 
       - name: Remove release keystore
         if: always()

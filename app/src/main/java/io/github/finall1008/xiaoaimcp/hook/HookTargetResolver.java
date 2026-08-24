@@ -13,7 +13,6 @@ final class HookTargetResolver {
     private static final String KNOWN_MANAGER = "l8.w1";
     private static final String KNOWN_SERVER = "r8.h";
     private static final String KNOWN_SERVERS = "r8.k";
-    private static final String CONTINUATION = "kotlin.coroutines.Continuation";
     private static final String SYNC_METHOD = "syncConfigAndDiscoverIfNeeded";
     private static final String RELOAD_METHOD = "reloadConfig";
     private static final String CATALOG_METHOD = "loadCatalogAndRegister";
@@ -21,12 +20,10 @@ final class HookTargetResolver {
     private final ClassLoader classLoader;
     private final List<String> classNames;
     private final Map<String, Class<?>> loadedClasses = new HashMap<>();
-    private final Class<?> continuationClass;
 
-    private HookTargetResolver(ClassLoader classLoader, List<String> classNames) throws Exception {
+    private HookTargetResolver(ClassLoader classLoader, List<String> classNames) {
         this.classLoader = classLoader;
         this.classNames = classNames;
-        continuationClass = Class.forName(CONTINUATION, false, classLoader);
     }
 
     static ResolvedHookTargets resolve(ClassLoader classLoader, ClassCatalog catalog)
@@ -59,8 +56,8 @@ final class HookTargetResolver {
             Method text = manager.getDeclaredMethod("J");
             Method object = manager.getDeclaredMethod("A");
             Method sync = manager.getDeclaredMethod(SYNC_METHOD);
-            Method reload = manager.getDeclaredMethod(RELOAD_METHOD, continuationClass);
-            Method catalog = manager.getDeclaredMethod(CATALOG_METHOD, continuationClass);
+            Method reload = uniqueSuspendMethod(manager, RELOAD_METHOD);
+            Method catalog = uniqueSuspendMethod(manager, CATALOG_METHOD);
             ObjectConfigAdapter adapter = resolveObjectAdapter(servers, server);
             if (!isTextReader(text)
                     || object.getParameterCount() != 0
@@ -68,6 +65,7 @@ final class HookTargetResolver {
                     || !isSyncMethod(sync)
                     || !isSuspendMethod(reload)
                     || !isSuspendMethod(catalog)
+                    || !haveCompatibleSuspendParameters(reload, catalog)
                     || adapter == null) {
                 return null;
             }
@@ -79,7 +77,7 @@ final class HookTargetResolver {
                     sync,
                     reload,
                     catalog,
-                    continuationClass,
+                    suspendParameter(reload),
                     adapter
             );
         } catch (Throwable ignored) {
@@ -105,11 +103,15 @@ final class HookTargetResolver {
 
         Class<?> manager = managers.get(0);
         Method syncCandidate = findDeclaredMethod(manager, SYNC_METHOD);
-        Method reloadCandidate = findDeclaredMethod(manager, RELOAD_METHOD, continuationClass);
-        Method catalogCandidate = findDeclaredMethod(manager, CATALOG_METHOD, continuationClass);
+        Method reloadCandidate = uniqueSuspendMethod(manager, RELOAD_METHOD);
+        Method catalogCandidate = uniqueSuspendMethod(manager, CATALOG_METHOD);
         Method sync = isSyncMethod(syncCandidate) ? syncCandidate : null;
         Method reload = isSuspendMethod(reloadCandidate) ? reloadCandidate : null;
         Method catalog = isSuspendMethod(catalogCandidate) ? catalogCandidate : null;
+        if (!haveCompatibleSuspendParameters(reload, catalog)) {
+            reload = null;
+            catalog = null;
+        }
         Method text = uniqueTextReader(manager);
 
         Method object = null;
@@ -145,7 +147,7 @@ final class HookTargetResolver {
                 sync,
                 reload,
                 catalog,
-                continuationClass,
+                suspendParameter(reload != null ? reload : catalog),
                 adapter
         );
     }
@@ -170,8 +172,11 @@ final class HookTargetResolver {
 
     private boolean hasManagerAnchors(Class<?> candidate) {
         Method sync = findDeclaredMethod(candidate, SYNC_METHOD);
-        Method reload = findDeclaredMethod(candidate, RELOAD_METHOD, continuationClass);
-        Method catalog = findDeclaredMethod(candidate, CATALOG_METHOD, continuationClass);
+        Method reload = uniqueSuspendMethod(candidate, RELOAD_METHOD);
+        Method catalog = uniqueSuspendMethod(candidate, CATALOG_METHOD);
+        if (!haveCompatibleSuspendParameters(reload, catalog)) {
+            return false;
+        }
         int anchors = 0;
         if (isSyncMethod(sync)) {
             anchors++;
@@ -320,7 +325,34 @@ final class HookTargetResolver {
     }
 
     private static boolean isSuspendMethod(Method method) {
-        return method != null && method.getReturnType() == Object.class;
+        return method != null
+                && method.getParameterCount() == 1
+                && !method.getParameterTypes()[0].isPrimitive()
+                && method.getReturnType() == Object.class;
+    }
+
+    private static Method uniqueSuspendMethod(Class<?> type, String name) {
+        Method match = null;
+        for (Method method : type.getDeclaredMethods()) {
+            if (!name.equals(method.getName()) || !isSuspendMethod(method)) {
+                continue;
+            }
+            if (match != null) {
+                return null;
+            }
+            match = method;
+        }
+        return match;
+    }
+
+    private static boolean haveCompatibleSuspendParameters(Method first, Method second) {
+        return first == null
+                || second == null
+                || suspendParameter(first) == suspendParameter(second);
+    }
+
+    private static Class<?> suspendParameter(Method method) {
+        return method == null ? null : method.getParameterTypes()[0];
     }
 
     private static Method findDeclaredMethod(Class<?> type, String name, Class<?>... parameters) {
