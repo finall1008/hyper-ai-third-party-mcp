@@ -14,6 +14,13 @@
 - License: Apache License 2.0
 - Usage: packaged in the module App to access framework Remote Preferences.
 
+## Miuix
+
+- Project: https://github.com/compose-miuix-ui/miuix
+- Version: 0.9.3
+- License: Apache License 2.0
+- Usage: Compose UI and preference components packaged in the module App.
+
 ## Android Gradle Plugin and Gradle Wrapper
 
 - Android Gradle Plugin 9.2.1 is distributed under the Android SDK license.
