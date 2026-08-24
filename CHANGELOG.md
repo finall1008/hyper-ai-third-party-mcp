@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.1.1 - 2026-08-24
+
+- Derive the host coroutine continuation type from the resolved MCP methods instead of loading a
+  reflection class name that R8 could rewrite to a module-local test stub.
+- Require the reload and catalog suspend methods to share the same parameter type and fail closed
+  on ambiguous overloads or mismatched coroutine signatures.
+- Remove the fake `kotlin.coroutines.Continuation` test class and add a regression test proving
+  resolution does not perform a named Kotlin continuation lookup.
+- Build the live-reload continuation and empty coroutine context from the host method interfaces,
+  avoiding R8-rewritten lookups of Kotlin runtime implementation classes and suspended markers.
+- Run unit tests and lint in the release job and reject minimized artifacts that contain a mapped
+  module-local `kotlin.coroutines` runtime class.
+
 ## 1.1.0 - 2026-08-23
 
 - Replace the exact XiaoAi versionCode gate with a minimum `8.0` versionName policy in both

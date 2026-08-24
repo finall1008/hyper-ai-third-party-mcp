@@ -10,9 +10,7 @@ import android.util.Log;
 
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -55,9 +53,7 @@ public final class XiaoAiMcpModule extends XposedModule {
     private volatile Method hostConfigGetAllServers;
     private volatile Method hostConfigGetGatewayMode;
     private volatile Method hostServerGetName;
-    private volatile Class<?> hostContinuationClass;
-    private volatile Object hostEmptyCoroutineContext;
-    private volatile Object hostCoroutineSuspended;
+    private volatile CoroutineAdapter coroutineAdapter;
     private volatile SharedPreferences.OnSharedPreferenceChangeListener preferenceListener;
 
     @Override
@@ -146,13 +142,12 @@ public final class XiaoAiMcpModule extends XposedModule {
                 new DexClassCatalog(applicationInfo)
         );
         remotePreferences = getRemotePreferences(BridgeContract.PREF_GROUP);
-        installHooks(hostClassLoader, targets);
+        installHooks(targets);
         log(Log.INFO, TAG, "XiaoAi " + versionName + " accepted (minimum 8.0); resolver="
                 + targets.mode());
     }
 
-    private void installHooks(ClassLoader hostClassLoader, ResolvedHookTargets targets)
-            throws Exception {
+    private void installHooks(ResolvedHookTargets targets) throws Exception {
         ObjectConfigAdapter adapter = targets.objectAdapter();
         if (adapter != null) {
             hostServerConfigConstructor = adapter.serverConstructor();
@@ -175,7 +170,7 @@ public final class XiaoAiMcpModule extends XposedModule {
             throw new IllegalStateException("No MCP config reader hook could be installed");
         }
 
-        boolean reloadInstalled = prepareReload(hostClassLoader, targets)
+        boolean reloadInstalled = prepareReload(targets)
                 && installManagerCaptureHook(targets.syncMethod());
         if (reloadInstalled) {
             try {
@@ -230,25 +225,12 @@ public final class XiaoAiMcpModule extends XposedModule {
         }
     }
 
-    private boolean prepareReload(ClassLoader hostClassLoader, ResolvedHookTargets targets) {
+    private boolean prepareReload(ResolvedHookTargets targets) {
         if (targets.syncMethod() == null || targets.reloadMethod() == null) {
             return false;
         }
         try {
-            Class<?> emptyContextClass = Class.forName(
-                    "kotlin.coroutines.EmptyCoroutineContext",
-                    false,
-                    hostClassLoader
-            );
-            Field instanceField = emptyContextClass.getField("INSTANCE");
-            Class<?> intrinsics = Class.forName(
-                    "kotlin.coroutines.intrinsics.IntrinsicsKt",
-                    false,
-                    hostClassLoader
-            );
-            hostContinuationClass = targets.continuationClass();
-            hostEmptyCoroutineContext = instanceField.get(null);
-            hostCoroutineSuspended = intrinsics.getMethod("getCOROUTINE_SUSPENDED").invoke(null);
+            coroutineAdapter = CoroutineAdapter.create(targets.continuationClass());
             reloadMethod = targets.reloadMethod();
             return true;
         } catch (Throwable error) {
@@ -428,8 +410,8 @@ public final class XiaoAiMcpModule extends XposedModule {
         }
         Object manager = managerReference.get().get();
         Method method = reloadMethod;
-        Class<?> continuationClass = hostContinuationClass;
-        if (manager == null || method == null || continuationClass == null) {
+        CoroutineAdapter adapter = coroutineAdapter;
+        if (manager == null || method == null || adapter == null) {
             log(Log.INFO, TAG, "Configuration changed before MCP manager initialization; "
                     + "it will be applied on next XiaoAi startup");
             finishReload();
@@ -445,25 +427,11 @@ public final class XiaoAiMcpModule extends XposedModule {
         };
 
         try {
-            Object continuation = Proxy.newProxyInstance(
-                    continuationClass.getClassLoader(),
-                    new Class<?>[]{continuationClass},
-                    (proxy, calledMethod, args) -> switch (calledMethod.getName()) {
-                        case "getContext" -> hostEmptyCoroutineContext;
-                        case "resumeWith" -> {
-                            completion.run();
-                            yield null;
-                        }
-                        case "toString" -> "XiaoAiMcpReloadContinuation";
-                        case "hashCode" -> System.identityHashCode(proxy);
-                        case "equals" -> proxy == (args == null ? null : args[0]);
-                        default -> throw new UnsupportedOperationException(calledMethod.toString());
-                    }
-            );
+            Object continuation = adapter.newContinuation(completion);
             Object result = getInvoker(method)
                     .setType(XposedInterface.Invoker.Type.Chain.FULL)
                     .invoke(manager, continuation);
-            if (result != hostCoroutineSuspended) {
+            if (!CoroutineAdapter.isSuspended(result)) {
                 completion.run();
             }
         } catch (Throwable error) {

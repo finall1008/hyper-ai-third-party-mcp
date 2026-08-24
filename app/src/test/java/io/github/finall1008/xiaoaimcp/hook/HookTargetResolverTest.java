@@ -12,8 +12,6 @@ import org.junit.Test;
 import java.util.List;
 import java.util.Map;
 
-import kotlin.coroutines.Continuation;
-
 public final class HookTargetResolverTest {
     @Test
     public void structurallyResolvesRelocatedManagerAndObjectTypes() throws Exception {
@@ -24,6 +22,30 @@ public final class HookTargetResolverTest {
         assertTrue(targets.hasTextConfig());
         assertTrue(targets.hasObjectConfig());
         assertNotNull(targets.reloadMethod());
+        assertEquals(TestContinuation.class, targets.continuationClass());
+    }
+
+    @Test
+    public void resolvesWithoutLookingUpKotlinContinuationByName() throws Exception {
+        ClassLoader rejectingNamedLookup = new ClassLoader(
+                HookTargetResolverTest.class.getClassLoader()) {
+            @Override
+            protected Class<?> loadClass(String name, boolean resolve)
+                    throws ClassNotFoundException {
+                if ("kotlin.coroutines.Continuation".equals(name)) {
+                    throw new ClassNotFoundException(name);
+                }
+                return super.loadClass(name, resolve);
+            }
+        };
+
+        ResolvedHookTargets targets = resolve(
+                rejectingNamedLookup,
+                AdapterManager.class,
+                ServerConfig.class
+        );
+
+        assertEquals(TestContinuation.class, targets.continuationClass());
     }
 
     @Test
@@ -57,16 +79,29 @@ public final class HookTargetResolverTest {
                 () -> resolve(TextOnlyManager.class, SecondManager.class));
         assertThrows(HookTargetResolver.ResolutionException.class,
                 () -> resolve(NoAnchors.class));
+        assertThrows(HookTargetResolver.ResolutionException.class,
+                () -> resolve(MismatchedSuspendManager.class));
     }
 
     private static ResolvedHookTargets resolve(Class<?>... classes) throws Exception {
+        return resolve(HookTargetResolverTest.class.getClassLoader(), classes);
+    }
+
+    private static ResolvedHookTargets resolve(ClassLoader classLoader, Class<?>... classes)
+            throws Exception {
         List<String> names = java.util.Arrays.stream(classes)
                 .map(Class::getName)
                 .toList();
         return HookTargetResolver.resolve(
-                HookTargetResolverTest.class.getClassLoader(),
+                classLoader,
                 () -> names
         );
+    }
+
+    public interface TestContinuation {
+    }
+
+    public interface OtherContinuation {
     }
 
     public static final class AdapterManager {
@@ -81,11 +116,11 @@ public final class HookTargetResolverTest {
         public void syncConfigAndDiscoverIfNeeded() {
         }
 
-        public Object reloadConfig(Continuation continuation) {
+        public Object reloadConfig(TestContinuation continuation) {
             return null;
         }
 
-        public Object loadCatalogAndRegister(Continuation continuation) {
+        public Object loadCatalogAndRegister(TestContinuation continuation) {
             return null;
         }
     }
@@ -98,11 +133,11 @@ public final class HookTargetResolverTest {
         public void syncConfigAndDiscoverIfNeeded() {
         }
 
-        public Object reloadConfig(Continuation continuation) {
+        public Object reloadConfig(TestContinuation continuation) {
             return null;
         }
 
-        public Object loadCatalogAndRegister(Continuation continuation) {
+        public Object loadCatalogAndRegister(TestContinuation continuation) {
             return null;
         }
     }
@@ -115,11 +150,11 @@ public final class HookTargetResolverTest {
         public void syncConfigAndDiscoverIfNeeded() {
         }
 
-        public Object reloadConfig(Continuation continuation) {
+        public Object reloadConfig(TestContinuation continuation) {
             return null;
         }
 
-        public Object loadCatalogAndRegister(Continuation continuation) {
+        public Object loadCatalogAndRegister(TestContinuation continuation) {
             return null;
         }
     }
@@ -132,7 +167,7 @@ public final class HookTargetResolverTest {
         public void syncConfigAndDiscoverIfNeeded() {
         }
 
-        public Object loadCatalogAndRegister(Continuation continuation) {
+        public Object loadCatalogAndRegister(TestContinuation continuation) {
             return null;
         }
     }
@@ -149,11 +184,11 @@ public final class HookTargetResolverTest {
         public void syncConfigAndDiscoverIfNeeded() {
         }
 
-        public Object reloadConfig(Continuation continuation) {
+        public Object reloadConfig(TestContinuation continuation) {
             return null;
         }
 
-        public Object loadCatalogAndRegister(Continuation continuation) {
+        public Object loadCatalogAndRegister(TestContinuation continuation) {
             return null;
         }
     }
@@ -161,6 +196,23 @@ public final class HookTargetResolverTest {
     public static final class NoAnchors {
         public String config() {
             return "{}";
+        }
+    }
+
+    public static final class MismatchedSuspendManager {
+        public String textReader() {
+            return "{}";
+        }
+
+        public void syncConfigAndDiscoverIfNeeded() {
+        }
+
+        public Object reloadConfig(TestContinuation continuation) {
+            return null;
+        }
+
+        public Object loadCatalogAndRegister(OtherContinuation continuation) {
+            return null;
         }
     }
 
