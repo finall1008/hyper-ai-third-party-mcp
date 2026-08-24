@@ -407,86 +407,92 @@ private fun RuleEditDialog(
     ) {
         val current = editor ?: return@OverlayDialog
         Column(
-            modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp)
-                .verticalScroll(rememberScrollState()),
+            modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp),
         ) {
-            TextField(
-                value = current.draft.path,
-                onValueChange = {
-                    validationMessage = null
-                    onEditorChange(current.copy(draft = current.draft.copy(path = it)))
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = "/sdcard/Download",
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-            )
-            validationMessage?.let {
-                Text(
-                    it,
-                    modifier = Modifier.padding(top = 6.dp),
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.error,
+            Column(
+                modifier = Modifier.weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                TextField(
+                    value = current.draft.path,
+                    onValueChange = {
+                        validationMessage = null
+                        onEditorChange(current.copy(draft = current.draft.copy(path = it)))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = "/sdcard/Download",
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                )
+                validationMessage?.let {
+                    Text(
+                        it,
+                        modifier = Modifier.padding(top = 6.dp),
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.error,
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                CheckboxPreference(
+                    title = "允许删改既有文件",
+                    checked = current.draft.allowMutation,
+                    onCheckedChange = {
+                        onEditorChange(current.copy(draft = current.draft.copy(allowMutation = it)))
+                    },
+                    checkboxLocation = CheckboxLocation.End,
+                )
+                CheckboxPreference(
+                    title = "允许锁屏读取",
+                    checked = current.draft.allowLockscreenRead,
+                    onCheckedChange = {
+                        onEditorChange(
+                            current.copy(draft = current.draft.copy(allowLockscreenRead = it)),
+                        )
+                    },
+                    checkboxLocation = CheckboxLocation.End,
+                )
+                CheckboxPreference(
+                    title = "允许锁屏新建及删改",
+                    checked = current.draft.allowLockscreenMutation,
+                    onCheckedChange = {
+                        onEditorChange(
+                            current.copy(draft = current.draft.copy(allowLockscreenMutation = it)),
+                        )
+                    },
+                    checkboxLocation = CheckboxLocation.End,
+                )
+                CheckboxPreference(
+                    title = "允许后台/定时 Agent 删改",
+                    checked = current.draft.allowBackgroundMutation,
+                    onCheckedChange = {
+                        onEditorChange(
+                            current.copy(draft = current.draft.copy(allowBackgroundMutation = it)),
+                        )
+                    },
+                    checkboxLocation = CheckboxLocation.End,
+                )
+                CheckboxPreference(
+                    title = "允许锁屏递归删除目录",
+                    checked = current.draft.allowRecursiveDelete,
+                    onCheckedChange = {
+                        onEditorChange(
+                            current.copy(draft = current.draft.copy(allowRecursiveDelete = it)),
+                        )
+                    },
+                    checkboxLocation = CheckboxLocation.End,
+                )
+                SectionLabel("操作确认策略", Modifier.padding(top = 12.dp))
+                ConfirmationPolicyChoices(
+                    selected = current.draft.confirmationPolicy,
+                    onSelected = {
+                        onEditorChange(
+                            current.copy(draft = current.draft.copy(confirmationPolicy = it)),
+                        )
+                    },
                 )
             }
-            Spacer(Modifier.height(10.dp))
-            CheckboxPreference(
-                title = "允许删改既有文件",
-                checked = current.draft.allowMutation,
-                onCheckedChange = {
-                    onEditorChange(current.copy(draft = current.draft.copy(allowMutation = it)))
-                },
-                checkboxLocation = CheckboxLocation.End,
-            )
-            CheckboxPreference(
-                title = "允许锁屏读取",
-                checked = current.draft.allowLockscreenRead,
-                onCheckedChange = {
-                    onEditorChange(
-                        current.copy(draft = current.draft.copy(allowLockscreenRead = it)),
-                    )
-                },
-                checkboxLocation = CheckboxLocation.End,
-            )
-            CheckboxPreference(
-                title = "允许锁屏新建及删改",
-                checked = current.draft.allowLockscreenMutation,
-                onCheckedChange = {
-                    onEditorChange(
-                        current.copy(draft = current.draft.copy(allowLockscreenMutation = it)),
-                    )
-                },
-                checkboxLocation = CheckboxLocation.End,
-            )
-            CheckboxPreference(
-                title = "允许后台/定时 Agent 删改",
-                checked = current.draft.allowBackgroundMutation,
-                onCheckedChange = {
-                    onEditorChange(
-                        current.copy(draft = current.draft.copy(allowBackgroundMutation = it)),
-                    )
-                },
-                checkboxLocation = CheckboxLocation.End,
-            )
-            CheckboxPreference(
-                title = "允许锁屏递归删除目录",
-                checked = current.draft.allowRecursiveDelete,
-                onCheckedChange = {
-                    onEditorChange(
-                        current.copy(draft = current.draft.copy(allowRecursiveDelete = it)),
-                    )
-                },
-                checkboxLocation = CheckboxLocation.End,
-            )
-            SectionLabel("操作确认策略", Modifier.padding(top = 12.dp))
-            ConfirmationPolicyChoices(
-                selected = current.draft.confirmationPolicy,
-                onSelected = {
-                    onEditorChange(current.copy(draft = current.draft.copy(confirmationPolicy = it)))
-                },
-            )
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 TextButton(
