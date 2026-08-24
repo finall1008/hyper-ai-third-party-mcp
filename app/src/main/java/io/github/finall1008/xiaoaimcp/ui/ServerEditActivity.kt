@@ -7,10 +7,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
@@ -171,12 +176,13 @@ private fun ServerEditScreen(
             Button(
                 onClick = onSave,
                 enabled = fatalMessage == null,
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp),
                 colors = ButtonDefaults.buttonColorsPrimary(),
             ) {
                 Text("保存并应用")
             }
         },
+        contentWindowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
@@ -202,7 +208,8 @@ private fun ServerEditScreen(
                             onValueChange = { onFormChange(form.copy(description = it)) },
                             modifier = Modifier.fillMaxWidth(),
                             label = "说明（可选）",
-                            singleLine = true,
+                            minLines = 3,
+                            maxLines = 6,
                         )
                         TextField(
                             value = form.url,
@@ -269,15 +276,15 @@ private fun ServerEditScreen(
                 }
             }
         }
+        MessageDialog(
+            message = errorMessage,
+            title = "无法保存",
+            onDismiss = onDismissError,
+        )
+        MessageDialog(
+            message = fatalMessage,
+            title = "API 102 服务未连接",
+            onDismiss = onDismissFatal,
+        )
     }
-    MessageDialog(
-        message = errorMessage,
-        title = "无法保存",
-        onDismiss = onDismissError,
-    )
-    MessageDialog(
-        message = fatalMessage,
-        title = "API 102 服务未连接",
-        onDismiss = onDismissFatal,
-    )
 }

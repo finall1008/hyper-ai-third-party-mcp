@@ -8,11 +8,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -212,6 +219,9 @@ private fun FilePolicyScreen(
 ) {
     var editor by remember { mutableStateOf<RuleEditor?>(null) }
     var pendingDelete by remember { mutableStateOf<Pair<Int, FileAccessRule>?>(null) }
+    val navigationBarPadding = WindowInsets.navigationBars
+        .asPaddingValues()
+        .calculateBottomPadding()
     Scaffold(
         topBar = {
             SmallTopAppBar(
@@ -220,10 +230,16 @@ private fun FilePolicyScreen(
                 navigationIcon = { BackButton(onBack) },
             )
         },
+        contentWindowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                top = 12.dp,
+                end = 16.dp,
+                bottom = 12.dp + navigationBarPadding,
+            ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
@@ -296,29 +312,29 @@ private fun FilePolicyScreen(
             }
             item { Spacer(Modifier.height(8.dp)) }
         }
+        RuleEditDialog(
+            editor = editor,
+            onEditorChange = { editor = it },
+            onDismiss = { editor = null },
+            onSave = onSaveRule,
+        )
+        ConfirmDialog(
+            show = pendingDelete != null,
+            title = "删除目录规则",
+            message = pendingDelete?.let { "删除 “${it.second.path()}” 的授权规则？" }.orEmpty(),
+            confirmText = "删除",
+            onDismiss = { pendingDelete = null },
+            onConfirm = {
+                pendingDelete?.first?.let(onDeleteRule)
+                pendingDelete = null
+            },
+        )
+        MessageDialog(
+            message = errorMessage,
+            title = "操作失败",
+            onDismiss = onDismissError,
+        )
     }
-    RuleEditDialog(
-        editor = editor,
-        onEditorChange = { editor = it },
-        onDismiss = { editor = null },
-        onSave = onSaveRule,
-    )
-    ConfirmDialog(
-        show = pendingDelete != null,
-        title = "删除目录规则",
-        message = pendingDelete?.let { "删除 “${it.second.path()}” 的授权规则？" }.orEmpty(),
-        confirmText = "删除",
-        onDismiss = { pendingDelete = null },
-        onConfirm = {
-            pendingDelete?.first?.let(onDeleteRule)
-            pendingDelete = null
-        },
-    )
-    MessageDialog(
-        message = errorMessage,
-        title = "操作失败",
-        onDismiss = onDismissError,
-    )
 }
 
 @Composable
@@ -471,18 +487,23 @@ private fun RuleEditDialog(
             )
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                TextButton(text = "取消", onClick = onDismiss)
-                Button(
+                TextButton(
+                    text = "取消",
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(20.dp))
+                TextButton(
+                    text = "保存",
                     onClick = {
                         validationMessage = onSave(current.index, current.draft)
                         if (validationMessage == null) onDismiss()
                     },
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                ) {
-                    Text("保存")
-                }
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                )
             }
         }
     }
