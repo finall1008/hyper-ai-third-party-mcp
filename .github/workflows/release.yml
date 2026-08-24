@@ -78,10 +78,6 @@ jobs:
           MAPPING=app/build/outputs/mapping/release/mapping.txt
           unzip -t "$APK"
           test -s "$MAPPING"
-          if grep -q '^kotlin\.coroutines\.' "$MAPPING"; then
-            echo "Release APK contains module-local kotlin.coroutines runtime classes" >&2
-            exit 1
-          fi
 
       - name: Remove release keystore
         if: always()

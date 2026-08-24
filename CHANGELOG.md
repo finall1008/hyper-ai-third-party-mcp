@@ -8,6 +8,8 @@
   candidates in one short-lived DexKit session and independently fall back per capability.
 - Log only candidate counts, resolver source, and elapsed time; do not persist DexKit results or
   claim compatibility with an untested XiaoAi build.
+- Remove the obsolete release-time rejection of packaged `kotlin.coroutines` classes now that the
+  Compose configuration UI legitimately depends on the Kotlin coroutine runtime.
 - Add user-controlled `/sdcard` directory rules for mutating existing files, lockscreen file
   access, background/timer mutation, and lockscreen recursive deletion.
 - Resolve the file-storage and lockscreen policy targets with the same verified fast path plus
