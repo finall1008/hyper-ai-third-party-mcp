@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add DexKit 2.2.0 as an on-demand candidate index between the verified profile and the existing
+  full structural scan, while keeping reflection uniqueness checks authoritative.
+- Resolve MCP marker, lifecycle, object-container, mutation, lockscreen, and confirmation class
+  candidates in one short-lived DexKit session and independently fall back per capability.
+- Log only candidate counts, resolver source, and elapsed time; do not persist DexKit results or
+  claim compatibility with an untested XiaoAi build.
 - Add user-controlled `/sdcard` directory rules for mutating existing files, lockscreen file
   access, background/timer mutation, and lockscreen recursive deletion.
 - Resolve the file-storage and lockscreen policy targets with the same verified fast path plus

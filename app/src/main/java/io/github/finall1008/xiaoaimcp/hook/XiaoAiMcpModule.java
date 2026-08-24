@@ -92,18 +92,20 @@ public final class XiaoAiMcpModule extends XposedModule {
                     .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                     .intercept(chain -> {
                         boolean initialize = initializationStarted.compareAndSet(false, true);
-                        if (initialize) {
-                            try {
-                                initializeForApplication((Context) chain.getArg(0));
-                            } catch (Throwable error) {
-                                log(Log.ERROR, TAG,
-                                        "Hook initialization failed; host behavior is unchanged",
-                                        error);
-                                detach();
-                            }
-                        }
+                        Context attachContext = initialize ? (Context) chain.getArg(0) : null;
                         try {
-                            return chain.proceed();
+                            Object result = chain.proceed();
+                            if (initialize) {
+                                try {
+                                    initializeForApplication(attachContext);
+                                } catch (Throwable error) {
+                                    log(Log.ERROR, TAG,
+                                            "Hook initialization failed; host behavior is unchanged",
+                                            error);
+                                    detach();
+                                }
+                            }
+                            return result;
                         } finally {
                             if (initialize) {
                                 XposedInterface.HookHandle handle = bootstrapHook;
@@ -150,10 +152,30 @@ public final class XiaoAiMcpModule extends XposedModule {
         ClassCatalog catalog = new CachingClassCatalog(new DexClassCatalog(applicationInfo));
         remotePreferences = getRemotePreferences(BridgeContract.PREF_GROUP);
 
+        ResolvedHookTargets knownMcpTargets = HookTargetResolver.resolveKnown(hostClassLoader);
+        FilePolicyHookTargets knownFileTargets = FilePolicyHookResolver.resolveKnown(
+                hostClassLoader);
+        DexDiscoveryHints dexHints = DexDiscoveryHints.empty();
+        if (knownMcpTargets == null || knownFileTargets == null) {
+            try {
+                dexHints = DexKitTargetLocator.discover(hostClassLoader);
+                log(Log.INFO, TAG, "DexKit discovery: classes=" + dexHints.classNames().size()
+                        + ", managerHints=" + dexHints.mcpManagerClassNames().size()
+                        + ", methods=" + dexHints.matchedMethods()
+                        + ", elapsedMs=" + dexHints.elapsedMillis());
+            } catch (Throwable error) {
+                log(Log.WARN, TAG,
+                        "DexKit discovery unavailable; using full structural discovery",
+                        error);
+            }
+        }
+
         boolean mcpInstalled = false;
         String mcpResolver = "unavailable";
         try {
-            ResolvedHookTargets targets = HookTargetResolver.resolve(hostClassLoader, catalog);
+            ResolvedHookTargets targets = knownMcpTargets != null
+                    ? knownMcpTargets
+                    : HookTargetResolver.resolve(hostClassLoader, catalog, dexHints);
             installHooks(targets);
             mcpInstalled = true;
             mcpResolver = targets.mode();
@@ -162,7 +184,8 @@ public final class XiaoAiMcpModule extends XposedModule {
                     "MCP targets unavailable; independently resolved file-policy hooks remain eligible",
                     error);
         }
-        boolean filePolicyInstalled = installFilePolicyHooks(hostClassLoader, catalog);
+        boolean filePolicyInstalled = installFilePolicyHooks(
+                hostClassLoader, catalog, knownFileTargets, dexHints);
         if (!mcpInstalled && !filePolicyInstalled) {
             throw new IllegalStateException("No compatible MCP or file-policy capability found");
         }
@@ -210,10 +233,17 @@ public final class XiaoAiMcpModule extends XposedModule {
                 + ", object=" + objectInstalled + ", liveReload=" + reloadInstalled);
     }
 
-    private boolean installFilePolicyHooks(ClassLoader classLoader, ClassCatalog catalog) {
+    private boolean installFilePolicyHooks(
+            ClassLoader classLoader,
+            ClassCatalog catalog,
+            FilePolicyHookTargets knownTargets,
+            DexDiscoveryHints dexHints
+    ) {
         FilePolicyHookTargets targets;
         try {
-            targets = FilePolicyHookResolver.resolve(classLoader, catalog);
+            targets = knownTargets != null
+                    ? knownTargets
+                    : FilePolicyHookResolver.resolve(classLoader, catalog, dexHints);
         } catch (Throwable error) {
             log(Log.WARN, TAG,
                     "File-policy targets unavailable; MCP hooks remain active and host file policy is unchanged",
