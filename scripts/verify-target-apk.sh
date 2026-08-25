@@ -59,4 +59,15 @@ for MARKER in \
     fi
 done
 
+for MARKER in \
+    'tool_selection_rules.md' \
+    'custom_prompt.md' \
+    'invalidateMemoryCache'; do
+    if printf '%s\n' "$DEX_STRINGS" | rg -F -q "$MARKER"; then
+        echo "Found System Prompt patch marker: $MARKER"
+    else
+        echo "System Prompt patch marker not found: $MARKER; that capability may degrade independently." >&2
+    fi
+done
+
 echo "Compatibility markers found. Runtime structural resolution is still required."

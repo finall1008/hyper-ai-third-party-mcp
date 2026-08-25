@@ -43,6 +43,11 @@ final class DexKitTargetLocator {
             "buildToastStream",
             "loadScript"
     );
+    private static final List<String> PROMPT_STRING_ANCHORS = List.of(
+            "tool_selection_rules.md",
+            "custom_prompt.md",
+            "complex_task_prompt.md"
+    );
 
     private static volatile boolean nativeLoaded;
 
@@ -56,6 +61,7 @@ final class DexKitTargetLocator {
         Set<String> allClasses = new LinkedHashSet<>();
         Set<String> managerClasses = new LinkedHashSet<>();
         Set<String> agentTraceClasses = new LinkedHashSet<>();
+        Set<String> promptClasses = new LinkedHashSet<>();
         int matchedMethods = 0;
         try (DexKitBridge bridge = DexKitBridge.create(classLoader, false)) {
             List<MethodData> markerMethods = bridge.findMethod(FindMethod.create().matcher(
@@ -93,6 +99,21 @@ final class DexKitTargetLocator {
             matchedMethods += traceMethodMatches.size();
             addDeclaringClasses(traceMethodMatches, agentTraceClasses);
             addRelatedDeclaringClasses(traceMethodMatches, agentTraceClasses);
+
+            for (String anchor : PROMPT_STRING_ANCHORS) {
+                List<MethodData> methods = bridge.findMethod(FindMethod.create().matcher(
+                        MethodMatcher.create().usingStrings(anchor)
+                ));
+                matchedMethods += methods.size();
+                addDeclaringClasses(methods, promptClasses);
+                addRelatedDeclaringClasses(methods, promptClasses);
+            }
+            List<MethodData> invalidators = bridge.findMethod(FindMethod.create().matcher(
+                    MethodMatcher.create().name("invalidateMemoryCache")
+            ));
+            matchedMethods += invalidators.size();
+            addDeclaringClasses(invalidators, promptClasses);
+            addRelatedDeclaringClasses(invalidators, promptClasses);
         }
 
         long elapsedMillis = (System.nanoTime() - started) / 1_000_000L;
@@ -100,6 +121,7 @@ final class DexKitTargetLocator {
                 List.copyOf(allClasses),
                 managerClasses,
                 agentTraceClasses,
+                List.copyOf(promptClasses),
                 matchedMethods,
                 elapsedMillis
         );
