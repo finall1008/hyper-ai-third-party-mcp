@@ -12,10 +12,12 @@ import java.io.File;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
+import java.lang.reflect.Field;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +48,7 @@ public final class XiaoAiMcpModule extends XposedModule {
     private final AtomicBoolean reloadPending = new AtomicBoolean(false);
     private final AtomicBoolean initializationStarted = new AtomicBoolean(false);
     private final AtomicBoolean invalidFilePolicyLogged = new AtomicBoolean(false);
+    private final AtomicBoolean agentTraceBundleFallbackLogged = new AtomicBoolean(false);
     private final ThreadLocal<ArrayDeque<String>> fileAgentContext =
             ThreadLocal.withInitial(ArrayDeque::new);
     private final ExecutorService reloadExecutor = Executors.newSingleThreadExecutor(runnable -> {
@@ -53,6 +56,12 @@ public final class XiaoAiMcpModule extends XposedModule {
         thread.setDaemon(true);
         return thread;
     });
+    private final AgentToolTraceStore agentToolTraceStore = new AgentToolTraceStore();
+    private final ThreadLocal<Boolean> initializationReasoningPending = new ThreadLocal<>();
+    private final Set<Object> initializationReasoningObjects =
+            Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<Object> initializationReasoningEnvelopes =
+            Collections.newSetFromMap(new IdentityHashMap<>());
 
     private volatile SharedPreferences remotePreferences;
     private volatile boolean targetProcess;
@@ -65,6 +74,9 @@ public final class XiaoAiMcpModule extends XposedModule {
     private volatile Method hostServerGetName;
     private volatile CoroutineAdapter coroutineAdapter;
     private volatile SharedPreferences.OnSharedPreferenceChangeListener preferenceListener;
+    private volatile Method hostToastStreamBuilder;
+    private volatile Object hostInstructionBuilder;
+    private volatile Class<?> hostInstructionBuilderClass;
 
     @Override
     public void onModuleLoaded(XposedModuleInterface.ModuleLoadedParam param) {
@@ -151,16 +163,22 @@ public final class XiaoAiMcpModule extends XposedModule {
         ClassLoader hostClassLoader = context.getClassLoader();
         ClassCatalog catalog = new CachingClassCatalog(new DexClassCatalog(applicationInfo));
         remotePreferences = getRemotePreferences(BridgeContract.PREF_GROUP);
+        boolean agentTraceEnabled = isAgentTraceEnabled();
 
         ResolvedHookTargets knownMcpTargets = HookTargetResolver.resolveKnown(hostClassLoader);
         FilePolicyHookTargets knownFileTargets = FilePolicyHookResolver.resolveKnown(
                 hostClassLoader);
         DexDiscoveryHints dexHints = DexDiscoveryHints.empty();
-        if (knownMcpTargets == null || knownFileTargets == null) {
+        AgentTraceTargets knownAgentTraceTargets = agentTraceEnabled
+                ? AgentTraceTargetResolver.resolveKnown(hostClassLoader)
+                : null;
+        if (knownMcpTargets == null || knownFileTargets == null
+                || (agentTraceEnabled && !knownAgentTraceTargets.hasAllCapabilities())) {
             try {
                 dexHints = DexKitTargetLocator.discover(hostClassLoader);
                 log(Log.INFO, TAG, "DexKit discovery: classes=" + dexHints.classNames().size()
                         + ", managerHints=" + dexHints.mcpManagerClassNames().size()
+                        + ", agentTraceHints=" + dexHints.agentTraceClassNames().size()
                         + ", methods=" + dexHints.matchedMethods()
                         + ", elapsedMs=" + dexHints.elapsedMillis());
             } catch (Throwable error) {
@@ -186,11 +204,321 @@ public final class XiaoAiMcpModule extends XposedModule {
         }
         boolean filePolicyInstalled = installFilePolicyHooks(
                 hostClassLoader, catalog, knownFileTargets, dexHints);
-        if (!mcpInstalled && !filePolicyInstalled) {
+        boolean agentTraceInstalled = false;
+        String agentTraceResolver = "disabled";
+        if (agentTraceEnabled) {
+            try {
+                AgentTraceTargets agentTraceTargets = !knownAgentTraceTargets.hasAllCapabilities()
+                        ? AgentTraceTargetResolver.resolve(hostClassLoader, catalog, dexHints)
+                        : knownAgentTraceTargets;
+                AgentTraceCapabilities capabilities = installAgentTraceHooks(
+                        context, agentTraceTargets);
+                agentTraceInstalled = capabilities.any();
+                agentTraceResolver = agentTraceTargets.mode();
+                log(Log.INFO, TAG, "Agent Trace capabilities: resolver=" + agentTraceResolver
+                        + ", reasoning=" + capabilities.reasoning()
+                        + ", toolDetails=" + capabilities.toolDetails()
+                        + ", bundlePatch=" + capabilities.bundlePatch()
+                        + ", initMarker=" + capabilities.initializationMarker());
+            } catch (Throwable error) {
+                agentTraceResolver = "unavailable";
+                log(Log.WARN, TAG, "Agent Trace unavailable; host behavior is unchanged", error);
+            }
+        } else {
+            log(Log.INFO, TAG, "Agent Trace disabled by module preference; no trace hooks installed");
+        }
+        if (!mcpInstalled && !filePolicyInstalled && !agentTraceInstalled) {
             throw new IllegalStateException("No compatible MCP or file-policy capability found");
         }
         log(Log.INFO, TAG, "XiaoAi " + versionName + " accepted (minimum 8.0); mcp="
-                + mcpResolver + ", filePolicy=" + filePolicyInstalled);
+                + mcpResolver + ", filePolicy=" + filePolicyInstalled
+                + ", agentTrace=" + agentTraceResolver);
+    }
+
+    private boolean isAgentTraceEnabled() {
+        SharedPreferences preferences = remotePreferences;
+        return preferences == null
+                ? BridgeContract.DEFAULT_AGENT_TRACE_ENABLED
+                : preferences.getBoolean(
+                        BridgeContract.PREF_AGENT_TRACE_ENABLED,
+                        BridgeContract.DEFAULT_AGENT_TRACE_ENABLED
+                );
+    }
+
+    private AgentTraceCapabilities installAgentTraceHooks(
+            Context context,
+            AgentTraceTargets targets
+    ) {
+        boolean reasoningInstalled = false;
+        boolean initializationMarkerInstalled = false;
+        boolean toolDetailsInstalled = false;
+        boolean bundlePatchInstalled = false;
+
+        if (targets.reasoningSuppressor() != null) {
+            try {
+                tryDeoptimize(targets.reasoningSuppressor());
+                tryDeoptimize(targets.reasoningResponseMapper());
+                hook(targets.reasoningSuppressor())
+                        .setId("xiaoai-agent-trace-reasoning")
+                        .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Object original = chain.proceed();
+                            if (Boolean.TRUE.equals(original)) {
+                                initializationReasoningPending.set(Boolean.TRUE);
+                                return false;
+                            }
+                            return original;
+                        });
+                reasoningInstalled = true;
+            } catch (Throwable error) {
+                log(Log.WARN, TAG, "公開 reasoning Hook unavailable", error);
+            }
+        }
+
+        if (reasoningInstalled && targets.reasoningConstructor() != null) {
+            try {
+                hook(targets.reasoningConstructor())
+                        .setId("xiaoai-agent-trace-reasoning-phase")
+                        .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            boolean initialization = Boolean.TRUE.equals(
+                                    initializationReasoningPending.get());
+                            try {
+                                Object result = chain.proceed();
+                                if (initialization && chain.getThisObject() != null) {
+                                    synchronized (initializationReasoningObjects) {
+                                        initializationReasoningObjects.add(chain.getThisObject());
+                                    }
+                                }
+                                return result;
+                            } finally {
+                                if (initialization) {
+                                    initializationReasoningPending.remove();
+                                }
+                            }
+                        });
+            } catch (Throwable error) {
+                log(Log.WARN, TAG, "reasoning phase marker unavailable", error);
+            }
+        }
+
+        if (targets.envelopeFrom() != null && targets.reasoningMapper() != null) {
+            try {
+                hook(targets.envelopeFrom())
+                        .setId("xiaoai-agent-trace-reasoning-envelope")
+                        .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Object source = chain.getArg(0);
+                            Object result = chain.proceed();
+                            if (isInitializationObject(source) && result != null) {
+                                synchronized (initializationReasoningEnvelopes) {
+                                    initializationReasoningEnvelopes.add(result);
+                                }
+                            }
+                            return result;
+                        });
+                hook(targets.reasoningMapper())
+                        .setId("xiaoai-agent-trace-reasoning-marker")
+                        .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Object source = chain.getArg(0);
+                            Object result = chain.proceed();
+                            if (isInitializationEnvelope(source)) {
+                                prependInitializationMarker(result, chain.getArg(1));
+                            }
+                            return result;
+                        });
+                initializationMarkerInstalled = true;
+            } catch (Throwable error) {
+                log(Log.WARN, TAG, "初始化 reasoning 标记 unavailable", error);
+            }
+        }
+
+        if (targets.toolCallBuilder() != null) {
+            try {
+                hostInstructionBuilderClass = targets.toastStreamBuilder() != null
+                        ? targets.toastStreamBuilder().getDeclaringClass()
+                        : targets.toolCallBuilder().getDeclaringClass();
+                hostToastStreamBuilder = targets.toastStreamBuilder();
+                hook(targets.toolCallBuilder())
+                        .setId("xiaoai-agent-trace-tool-details")
+                        .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Object rawEvent = chain.getArg(0);
+                            Object rawPayload = chain.getArg(1);
+                            Object rawDialogId = chain.getArg(2);
+                            Object result = chain.proceed();
+                            if (!(rawEvent instanceof String event)
+                                    || !(rawPayload instanceof String payload)
+                                    || !(rawDialogId instanceof String dialogId)) {
+                                return result;
+                            }
+                            String merged = agentToolTraceStore.merge(dialogId, event, payload);
+                            if (!merged.equals(payload)) {
+                                patchToolInstructionPayload(result, merged);
+                            }
+                            return result;
+                        });
+                toolDetailsInstalled = true;
+            } catch (Throwable error) {
+                log(Log.WARN, TAG, "工具详情关联 Hook unavailable", error);
+            }
+        }
+
+        if (targets.toolCallBuilder() == null && targets.toastStreamBuilder() != null) {
+            hostInstructionBuilderClass = targets.toastStreamBuilder().getDeclaringClass();
+            hostToastStreamBuilder = targets.toastStreamBuilder();
+        }
+
+        if (targets.bundleLoader() != null && context != null) {
+            try {
+                hook(targets.bundleLoader())
+                        .setId("xiaoai-agent-trace-rn-bundle")
+                        .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Object rawPath = chain.getArg(0);
+                            if (!(rawPath instanceof String path)) {
+                                return chain.proceed();
+                            }
+                            try {
+                                String patchedPath = AgentTraceBundlePatcher.patchPath(context, path);
+                                if (!path.equals(patchedPath)) {
+                                    return chain.proceedWith(
+                                            chain.getThisObject(),
+                                            new Object[]{patchedPath, chain.getArg(1)}
+                                    );
+                                }
+                                if (path.contains("stream.bundle")
+                                        && !path.contains("xiaoai-agent-trace/")
+                                        && agentTraceBundleFallbackLogged.compareAndSet(false, true)) {
+                                    log(Log.INFO, TAG,
+                                            "RN Agent Trace bundle shape not recognized; using host bundle");
+                                }
+                            } catch (Throwable error) {
+                                log(Log.WARN, TAG, "RN Agent Trace bundle patch failed; using host bundle", error);
+                            }
+                            return chain.proceed();
+                        });
+                bundlePatchInstalled = true;
+            } catch (Throwable error) {
+                log(Log.WARN, TAG, "RN Agent Trace bundle Hook unavailable", error);
+            }
+        }
+
+        return new AgentTraceCapabilities(
+                reasoningInstalled,
+                toolDetailsInstalled,
+                bundlePatchInstalled,
+                initializationMarkerInstalled
+        );
+    }
+
+    private boolean isInitializationObject(Object value) {
+        if (value == null) {
+            return false;
+        }
+        synchronized (initializationReasoningObjects) {
+            return initializationReasoningObjects.remove(value);
+        }
+    }
+
+    private boolean isInitializationEnvelope(Object value) {
+        if (value == null) {
+            return false;
+        }
+        synchronized (initializationReasoningEnvelopes) {
+            return initializationReasoningEnvelopes.remove(value);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void prependInitializationMarker(Object mapped, Object rawDialogId) {
+        if (!(rawDialogId instanceof String dialogId) || mapped == null) {
+            return;
+        }
+        try {
+            Method getInstructions = mapped.getClass().getMethod("getInstructions");
+            Object value = getInstructions.invoke(mapped);
+            if (!(value instanceof List<?> rawInstructions)) {
+                return;
+            }
+            Object marker = buildHostToastStream("**初始化推理**", dialogId);
+            if (marker == null) {
+                return;
+            }
+            List<Object> instructions = (List<Object>) rawInstructions;
+            int index = Math.max(0, instructions.size() - 1);
+            instructions.add(index, marker);
+        } catch (Throwable error) {
+            log(Log.WARN, TAG, "Unable to add initialization reasoning marker", error);
+        }
+    }
+
+    private Object buildHostToastStream(String text, String dialogId) throws Exception {
+        Method builder = hostToastStreamBuilder;
+        Object instance = hostInstructionBuilder;
+        if (builder == null || instance == null) {
+            Class<?> owner = hostInstructionBuilderClass;
+            if (owner == null) {
+                return null;
+            }
+            for (Field field : owner.getDeclaredFields()) {
+                if (!java.lang.reflect.Modifier.isStatic(field.getModifiers())
+                        || !owner.isAssignableFrom(field.getType())) {
+                    continue;
+                }
+                field.setAccessible(true);
+                Object candidate = field.get(null);
+                if (candidate != null) {
+                    instance = candidate;
+                    break;
+                }
+            }
+            for (Method candidate : owner.getDeclaredMethods()) {
+                Class<?>[] parameters = candidate.getParameterTypes();
+                if (candidate.getName().equals("buildToastStream")
+                        && parameters.length == 2
+                        && parameters[0] == String.class
+                        && parameters[1] == String.class) {
+                    candidate.setAccessible(true);
+                    builder = candidate;
+                    break;
+                }
+            }
+            hostInstructionBuilder = instance;
+            hostToastStreamBuilder = builder;
+        }
+        if (builder == null || instance == null) {
+            return null;
+        }
+        return builder.invoke(instance, text, dialogId);
+    }
+
+    private static void patchToolInstructionPayload(Object instruction, String data) {
+        if (instruction == null || data == null) {
+            return;
+        }
+        try {
+            Method getPayload = instruction.getClass().getMethod("getPayload");
+            Object payload = getPayload.invoke(instruction);
+            if (payload == null) {
+                return;
+            }
+            Method put = null;
+            for (Method method : payload.getClass().getMethods()) {
+                Class<?>[] parameters = method.getParameterTypes();
+                if (method.getName().equals("put") && parameters.length == 2
+                        && parameters[0] == String.class && parameters[1] == String.class) {
+                    put = method;
+                    break;
+                }
+            }
+            if (put != null) {
+                put.invoke(payload, "data", data);
+            }
+        } catch (Throwable ignored) {
+            // The host summary remains usable when its JSON node implementation changes.
+        }
     }
 
     private void installHooks(ResolvedHookTargets targets) throws Exception {
