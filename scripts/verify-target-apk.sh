@@ -43,4 +43,20 @@ for MARKER in \
     fi
 done
 
+for MARKER in \
+    'reasoning_delta' \
+    'reasoningContent' \
+    'tool_call_id' \
+    'tool_done' \
+    'ToolCallItem' \
+    'MICLAW_THINKING_CHAIN' \
+    'loadScript' \
+    '__reactNativeBundleEndSuccess__'; do
+    if printf '%s\n' "$DEX_STRINGS" | rg -F -q "$MARKER"; then
+        echo "Found Agent Trace marker: $MARKER"
+    else
+        echo "Agent Trace marker not found: $MARKER; that capability may degrade independently." >&2
+    fi
+done
+
 echo "Compatibility markers found. Runtime structural resolution is still required."

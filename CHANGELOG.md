@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.3.0 - 2026-08-25
+
+- Add independently discovered Agent Trace hooks for public MiMo reasoning and tool payloads,
+  including per-tool input/output expansion in the existing MiClaw thinking chain.
+- Discover Agent Trace targets through the verified profile, DexKit hints, and full structural
+  fallback across all supported XiaoAi 8.0+ versions.
+- Patch only a private content-addressed copy of the host Stream RN bundle; incompatible bundle
+  shapes fall back to the original host UI without affecting MCP or file-policy hooks.
+- Add an independent, default-on Agent Trace switch. Disabling it skips reasoning, tool-detail,
+  and RN bundle hooks without changing MCP or file-policy behavior; changes apply after restarting
+  XiaoAi.
+
 ## 1.2.0 - 2026-08-24
 
 - Add DexKit 2.2.0 as an on-demand candidate index between the verified profile and the existing

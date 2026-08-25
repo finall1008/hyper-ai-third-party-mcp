@@ -1,5 +1,6 @@
 package io.github.finall1008.xiaoaimcp.ui
 
+import android.content.SharedPreferences
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -57,6 +58,7 @@ import java.util.Locale
 class MainActivity : ComponentActivity(), BridgeApplication.ServiceStateListener {
     private var state by mutableStateOf(MainUiState())
     private var errorMessage by mutableStateOf<String?>(null)
+    private var preferences: SharedPreferences? = null
     private var repository: RemoteConfigRepository? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,6 +73,7 @@ class MainActivity : ComponentActivity(), BridgeApplication.ServiceStateListener
                     onOpenFilePolicy = {
                         startActivity(Intent(this, FilePolicyActivity::class.java))
                     },
+                    onAgentTraceEnabledChange = ::setAgentTraceEnabled,
                     onEdit = ::edit,
                     onEnabledChange = ::setServerEnabled,
                     onDelete = ::delete,
@@ -117,11 +120,12 @@ class MainActivity : ComponentActivity(), BridgeApplication.ServiceStateListener
         }
 
         val (targetStatus, targetReady) = targetStatus()
-        repository = if (serviceReady) {
-            BridgeApplication.remotePreferences()?.let(::RemoteConfigRepository)
+        preferences = if (serviceReady) {
+            BridgeApplication.remotePreferences()
         } else {
             null
         }
+        repository = preferences?.let(::RemoteConfigRepository)
         val servers = try {
             repository?.load().orEmpty()
         } catch (error: Exception) {
@@ -132,6 +136,10 @@ class MainActivity : ComponentActivity(), BridgeApplication.ServiceStateListener
             frameworkStatus = frameworkStatus,
             targetStatus = targetStatus,
             editingEnabled = serviceReady && targetReady,
+            agentTraceEnabled = preferences?.getBoolean(
+                BridgeContract.PREF_AGENT_TRACE_ENABLED,
+                BridgeContract.DEFAULT_AGENT_TRACE_ENABLED,
+            ) ?: BridgeContract.DEFAULT_AGENT_TRACE_ENABLED,
             servers = servers,
         )
     }
@@ -187,6 +195,17 @@ class MainActivity : ComponentActivity(), BridgeApplication.ServiceStateListener
         }
     }
 
+    private fun setAgentTraceEnabled(enabled: Boolean) {
+        try {
+            val editor = preferences?.edit()
+                ?: error("API 102 服务未连接")
+            editor.putBoolean(BridgeContract.PREF_AGENT_TRACE_ENABLED, enabled).apply()
+            state = state.copy(agentTraceEnabled = enabled)
+        } catch (error: Exception) {
+            errorMessage = safeMessage(error)
+        }
+    }
+
     private fun delete(server: McpServer) {
         try {
             requireRepository().delete(server.id())
@@ -205,6 +224,7 @@ private data class MainUiState(
     val frameworkStatus: StatusUi = StatusUi(StatusLevel.ERROR, "正在连接 API 102 服务…"),
     val targetStatus: StatusUi = StatusUi(StatusLevel.WARNING, "正在检查超级小爱版本…"),
     val editingEnabled: Boolean = false,
+    val agentTraceEnabled: Boolean = BridgeContract.DEFAULT_AGENT_TRACE_ENABLED,
     val servers: List<McpServer> = emptyList(),
 )
 
@@ -219,6 +239,7 @@ private fun MainScreen(
     onDismissError: () -> Unit,
     onAdd: () -> Unit,
     onOpenFilePolicy: () -> Unit,
+    onAgentTraceEnabledChange: (Boolean) -> Unit,
     onEdit: (McpServer) -> Unit,
     onEnabledChange: (McpServer, Boolean) -> Unit,
     onDelete: (McpServer) -> Unit,
@@ -249,6 +270,36 @@ private fun MainScreen(
             item { SectionLabel("运行状态") }
             item { StatusCard("Xposed 框架", state.frameworkStatus) }
             item { StatusCard("目标应用", state.targetStatus) }
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    insideMargin = PaddingValues(16.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Agent 完整轨迹", style = MiuixTheme.textStyles.body1)
+                            Text(
+                                "显示公开 reasoning 和工具输入、输出详情；切换后需重启超级小爱",
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                        }
+                        Switch(
+                            checked = state.agentTraceEnabled,
+                            onCheckedChange = if (state.editingEnabled) {
+                                onAgentTraceEnabledChange
+                            } else {
+                                null
+                            },
+                            enabled = state.editingEnabled,
+                        )
+                    }
+                }
+            }
             item {
                 Button(
                     onClick = onAdd,

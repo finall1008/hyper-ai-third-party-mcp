@@ -25,6 +25,24 @@ final class DexKitTargetLocator {
             "confirmByCategory$runtime",
             "requestConsent$runtime"
     );
+    private static final List<String> AGENT_TRACE_STRING_ANCHORS = List.of(
+            "reasoning_delta",
+            "reasoningContent",
+            "shouldSuppressReasoning",
+            "tool_start",
+            "tool_progress",
+            "tool_done",
+            "tool_failed",
+            "tool_call_id",
+            "ToolCallItem",
+            "MICLAW_THINKING_CHAIN",
+            "__reactNativeBundleEndSuccess__"
+    );
+    private static final List<String> AGENT_TRACE_METHOD_ANCHORS = List.of(
+            "buildToolCallItem",
+            "buildToastStream",
+            "loadScript"
+    );
 
     private static volatile boolean nativeLoaded;
 
@@ -37,6 +55,7 @@ final class DexKitTargetLocator {
 
         Set<String> allClasses = new LinkedHashSet<>();
         Set<String> managerClasses = new LinkedHashSet<>();
+        Set<String> agentTraceClasses = new LinkedHashSet<>();
         int matchedMethods = 0;
         try (DexKitBridge bridge = DexKitBridge.create(classLoader, false)) {
             List<MethodData> markerMethods = bridge.findMethod(FindMethod.create().matcher(
@@ -55,12 +74,32 @@ final class DexKitTargetLocator {
             ));
             matchedMethods += anchorMethods.size();
             addDeclaringClasses(anchorMethods, allClasses);
+
+            for (String anchor : AGENT_TRACE_STRING_ANCHORS) {
+                List<MethodData> methods = bridge.findMethod(FindMethod.create().matcher(
+                        MethodMatcher.create().usingStrings(anchor)
+                ));
+                matchedMethods += methods.size();
+                addDeclaringClasses(methods, agentTraceClasses);
+                addRelatedDeclaringClasses(methods, agentTraceClasses);
+            }
+
+            MethodMatcher[] traceMethods = AGENT_TRACE_METHOD_ANCHORS.stream()
+                    .map(name -> MethodMatcher.create().name(name))
+                    .toArray(MethodMatcher[]::new);
+            List<MethodData> traceMethodMatches = bridge.findMethod(FindMethod.create().matcher(
+                    MethodMatcher.create().anyOf(traceMethods)
+            ));
+            matchedMethods += traceMethodMatches.size();
+            addDeclaringClasses(traceMethodMatches, agentTraceClasses);
+            addRelatedDeclaringClasses(traceMethodMatches, agentTraceClasses);
         }
 
         long elapsedMillis = (System.nanoTime() - started) / 1_000_000L;
         return new DexDiscoveryHints(
                 List.copyOf(allClasses),
                 managerClasses,
+                agentTraceClasses,
                 matchedMethods,
                 elapsedMillis
         );

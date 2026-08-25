@@ -85,7 +85,14 @@ DexKit 2.2.0 解析会话，使用 `personal_mcp_servers.json`、稳定方法族
 adb logcat | rg 'XiaoAiMcpBridge|PersonalMcpManager|McpClient'
 ```
 
-预期可看到 Hook 安装、服务器数量、reload 完成以及宿主 MCP 连接/发现日志，但不会出现请求头值。
+预期可看到 Hook 安装、服务器数量、reload 完成、Agent Trace 能力解析以及宿主 MCP
+连接/发现日志，但不会出现请求头值或 Agent 工具输入输出正文。
+
+Agent Trace 沿用超级小爱现有的“思考过程”卡片：公开 reasoning 会保持原顺序，工具摘要
+可以继续展开查看完整输入、输出、错误、耗时和元数据。Trace 目标同样按已验证 profile、
+DexKit 定向发现和完整 DEX 结构扫描顺序解析；新版 `8.0+` 不会仅因版本号被拒绝。
+模块 App 中的“Agent 完整轨迹”开关默认开启；关闭后不会安装 reasoning、工具详情或 RN bundle
+相关 Hook，且不影响 MCP 与文件策略。切换后需要结束并重新启动超级小爱进程才会生效。
 
 可对目标 APK 做离线标记诊断（此脚本不再校验固定版本或哈希）：
 
