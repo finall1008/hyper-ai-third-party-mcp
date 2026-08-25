@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 1.4.0 - 2026-08-26
+
+- Add an independent in-memory System Prompt patch capability for all agents, with exact
+  find-and-replace rules stored in Remote Preferences and fail-closed matching semantics.
+- Seed ordinary enabled reliability rules from a repository JSON resource for the verified XiaoAi
+  prompt, requiring per-tool MCP help, dependency-aware sequencing, complete JSON Schema type
+  adherence, and classified failure handling. Each seeded rule can be edited, disabled, or deleted.
+- Resolve the generic prompt-file reader through the verified profile, DexKit hints, and unique
+  structural fallback, and invalidate the host prompt cache after configuration changes when the
+  host capability is available.
+- Add a MIUIX configuration screen for ordered prompt patches and a full Prompt-file diff loaded
+  directly from the currently installed XiaoAi APK. Multiple Agent/file targets are listed, unchanged
+  lines remain visible, removals are red, and additions are green; no host session or refresh is required.
+- Migrate schema version 1's built-in-preset flag into ordinary version 2 patch entries.
+
 ## 1.3.0 - 2026-08-25
 
 - Add independently discovered Agent Trace hooks for public MiMo reasoning and tool payloads,

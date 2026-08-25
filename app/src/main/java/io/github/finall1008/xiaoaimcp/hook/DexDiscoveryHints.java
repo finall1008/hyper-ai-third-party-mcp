@@ -8,6 +8,7 @@ record DexDiscoveryHints(
         List<String> classNames,
         Set<String> mcpManagerClassNames,
         Set<String> agentTraceClassNames,
+        List<String> promptClassNames,
         int matchedMethods,
         long elapsedMillis
 ) {
@@ -15,6 +16,18 @@ record DexDiscoveryHints(
         classNames = List.copyOf(new LinkedHashSet<>(classNames));
         mcpManagerClassNames = Set.copyOf(mcpManagerClassNames);
         agentTraceClassNames = Set.copyOf(agentTraceClassNames);
+        promptClassNames = List.copyOf(new LinkedHashSet<>(promptClassNames));
+    }
+
+    DexDiscoveryHints(
+            List<String> classNames,
+            Set<String> mcpManagerClassNames,
+            Set<String> agentTraceClassNames,
+            int matchedMethods,
+            long elapsedMillis
+    ) {
+        this(classNames, mcpManagerClassNames, agentTraceClassNames, List.of(),
+                matchedMethods, elapsedMillis);
     }
 
     DexDiscoveryHints(
@@ -23,18 +36,22 @@ record DexDiscoveryHints(
             int matchedMethods,
             long elapsedMillis
     ) {
-        this(classNames, mcpManagerClassNames, Set.of(), matchedMethods, elapsedMillis);
+        this(classNames, mcpManagerClassNames, Set.of(), List.of(), matchedMethods, elapsedMillis);
     }
 
     static DexDiscoveryHints empty() {
-        return new DexDiscoveryHints(List.of(), Set.of(), Set.of(), 0, 0L);
+        return new DexDiscoveryHints(List.of(), Set.of(), Set.of(), List.of(), 0, 0L);
     }
 
     boolean isEmpty() {
-        return classNames.isEmpty() && agentTraceClassNames.isEmpty();
+        return classNames.isEmpty() && agentTraceClassNames.isEmpty() && promptClassNames.isEmpty();
     }
 
     boolean hasAgentTraceHints() {
         return !agentTraceClassNames.isEmpty();
+    }
+
+    boolean hasPromptHints() {
+        return !promptClassNames.isEmpty();
     }
 }

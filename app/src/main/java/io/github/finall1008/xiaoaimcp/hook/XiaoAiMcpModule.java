@@ -35,6 +35,10 @@ import io.github.finall1008.xiaoaimcp.filepolicy.FilePolicyCodec;
 import io.github.finall1008.xiaoaimcp.filepolicy.FilePolicyConfig;
 import io.github.finall1008.xiaoaimcp.filepolicy.LockscreenFileAccessEvaluator;
 import io.github.finall1008.xiaoaimcp.filepolicy.PathPolicyEvaluator;
+import io.github.finall1008.xiaoaimcp.prompt.PromptPatchCodec;
+import io.github.finall1008.xiaoaimcp.prompt.PromptPatchConfig;
+import io.github.finall1008.xiaoaimcp.prompt.PromptPatchEngine;
+import io.github.finall1008.xiaoaimcp.prompt.PromptPatchResult;
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.XposedModuleInterface;
@@ -48,6 +52,7 @@ public final class XiaoAiMcpModule extends XposedModule {
     private final AtomicBoolean reloadPending = new AtomicBoolean(false);
     private final AtomicBoolean initializationStarted = new AtomicBoolean(false);
     private final AtomicBoolean invalidFilePolicyLogged = new AtomicBoolean(false);
+    private final AtomicBoolean invalidPromptPatchLogged = new AtomicBoolean(false);
     private final AtomicBoolean agentTraceBundleFallbackLogged = new AtomicBoolean(false);
     private final ThreadLocal<ArrayDeque<String>> fileAgentContext =
             ThreadLocal.withInitial(ArrayDeque::new);
@@ -74,6 +79,8 @@ public final class XiaoAiMcpModule extends XposedModule {
     private volatile Method hostServerGetName;
     private volatile CoroutineAdapter coroutineAdapter;
     private volatile SharedPreferences.OnSharedPreferenceChangeListener preferenceListener;
+    private volatile Object promptCacheInvalidator;
+    private volatile Method promptCacheInvalidatorMethod;
     private volatile Method hostToastStreamBuilder;
     private volatile Object hostInstructionBuilder;
     private volatile Class<?> hostInstructionBuilderClass;
@@ -168,17 +175,19 @@ public final class XiaoAiMcpModule extends XposedModule {
         ResolvedHookTargets knownMcpTargets = HookTargetResolver.resolveKnown(hostClassLoader);
         FilePolicyHookTargets knownFileTargets = FilePolicyHookResolver.resolveKnown(
                 hostClassLoader);
+        PromptHookTargets knownPromptTargets = PromptHookResolver.resolveKnown(hostClassLoader);
         DexDiscoveryHints dexHints = DexDiscoveryHints.empty();
         AgentTraceTargets knownAgentTraceTargets = agentTraceEnabled
                 ? AgentTraceTargetResolver.resolveKnown(hostClassLoader)
                 : null;
-        if (knownMcpTargets == null || knownFileTargets == null
+        if (knownMcpTargets == null || knownFileTargets == null || knownPromptTargets == null
                 || (agentTraceEnabled && !knownAgentTraceTargets.hasAllCapabilities())) {
             try {
                 dexHints = DexKitTargetLocator.discover(hostClassLoader);
                 log(Log.INFO, TAG, "DexKit discovery: classes=" + dexHints.classNames().size()
                         + ", managerHints=" + dexHints.mcpManagerClassNames().size()
                         + ", agentTraceHints=" + dexHints.agentTraceClassNames().size()
+                        + ", promptHints=" + dexHints.promptClassNames().size()
                         + ", methods=" + dexHints.matchedMethods()
                         + ", elapsedMs=" + dexHints.elapsedMillis());
             } catch (Throwable error) {
@@ -204,6 +213,19 @@ public final class XiaoAiMcpModule extends XposedModule {
         }
         boolean filePolicyInstalled = installFilePolicyHooks(
                 hostClassLoader, catalog, knownFileTargets, dexHints);
+        boolean promptInstalled = false;
+        String promptResolver = "unavailable";
+        try {
+            PromptHookTargets promptTargets = knownPromptTargets != null
+                    ? knownPromptTargets
+                    : PromptHookResolver.resolve(hostClassLoader, catalog, dexHints);
+            promptInstalled = installPromptHook(promptTargets);
+            promptResolver = promptInstalled ? promptTargets.mode() : "unavailable";
+        } catch (Throwable error) {
+            log(Log.WARN, TAG,
+                    "System Prompt patch targets unavailable; other capabilities remain active",
+                    error);
+        }
         boolean agentTraceInstalled = false;
         String agentTraceResolver = "disabled";
         if (agentTraceEnabled) {
@@ -227,12 +249,100 @@ public final class XiaoAiMcpModule extends XposedModule {
         } else {
             log(Log.INFO, TAG, "Agent Trace disabled by module preference; no trace hooks installed");
         }
-        if (!mcpInstalled && !filePolicyInstalled && !agentTraceInstalled) {
-            throw new IllegalStateException("No compatible MCP or file-policy capability found");
+        if (mcpInstalled || promptInstalled) {
+            try {
+                installPreferenceListener();
+            } catch (Throwable error) {
+                log(Log.ERROR, TAG,
+                        "Preference listener unavailable; configuration applies next startup",
+                        error);
+            }
+        }
+        if (!mcpInstalled && !filePolicyInstalled && !agentTraceInstalled && !promptInstalled) {
+            throw new IllegalStateException("No compatible module capability found");
         }
         log(Log.INFO, TAG, "XiaoAi " + versionName + " accepted (minimum 8.0); mcp="
                 + mcpResolver + ", filePolicy=" + filePolicyInstalled
-                + ", agentTrace=" + agentTraceResolver);
+                + ", agentTrace=" + agentTraceResolver
+                + ", promptPatch=" + promptResolver);
+    }
+
+    private boolean installPromptHook(PromptHookTargets targets) {
+        try {
+            tryDeoptimize(targets.resolvePrompt());
+            for (Method callSite : targets.callSites()) {
+                tryDeoptimize(callSite);
+            }
+            promptCacheInvalidator = targets.cacheInvalidator();
+            promptCacheInvalidatorMethod = targets.invalidateMemoryCache();
+            hook(targets.resolvePrompt())
+                    .setId("xiaoai-system-prompt-patch")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        Object original = chain.proceed();
+                        if (!(original instanceof String prompt)) {
+                            return original;
+                        }
+                        Object descriptor = chain.getThisObject();
+                        Object rawAgentId = chain.getArg(1);
+                        if (descriptor == null || !(rawAgentId instanceof String agentId)) {
+                            return original;
+                        }
+                        Object rawFileName = targets.fileNameField().get(descriptor);
+                        if (!(rawFileName instanceof String fileName)) {
+                            return original;
+                        }
+                        PromptPatchConfig config = loadPromptPatchConfig();
+                        if (config == null) {
+                            return original;
+                        }
+                        PromptPatchResult result = PromptPatchEngine.apply(
+                                prompt, agentId, fileName, config);
+                        if (!result.appliedPatchIds().isEmpty()) {
+                            log(Log.INFO, TAG, "Applied System Prompt patches: agent="
+                                    + redactAgentId(agentId) + ", file=" + fileName
+                                    + ", ids=" + result.appliedPatchIds());
+                        }
+                        for (PromptPatchResult.SkippedPatch skipped : result.skippedPatches()) {
+                            log(Log.WARN, TAG, "Skipped System Prompt patch: agent="
+                                    + redactAgentId(agentId) + ", file=" + fileName
+                                    + ", id=" + skipped.id()
+                                    + ", occurrences=" + skipped.occurrences());
+                        }
+                        return result.text();
+                    });
+            log(Log.INFO, TAG, "System Prompt patch capability: resolver=" + targets.mode()
+                    + ", callSites=" + targets.callSites().size()
+                    + ", cacheInvalidation=" + targets.canInvalidateMemoryCache());
+            return true;
+        } catch (Throwable error) {
+            promptCacheInvalidator = null;
+            promptCacheInvalidatorMethod = null;
+            log(Log.ERROR, TAG, "System Prompt patch hook unavailable", error);
+            return false;
+        }
+    }
+
+    private PromptPatchConfig loadPromptPatchConfig() {
+        SharedPreferences preferences = remotePreferences;
+        if (preferences == null) {
+            return PromptPatchConfig.defaults();
+        }
+        try {
+            PromptPatchConfig config = PromptPatchCodec.parse(preferences.getString(
+                    BridgeContract.PREF_PROMPT_PATCH_JSON,
+                    PromptPatchCodec.defaultConfig()
+            ));
+            invalidPromptPatchLogged.set(false);
+            return config;
+        } catch (Throwable error) {
+            if (invalidPromptPatchLogged.compareAndSet(false, true)) {
+                log(Log.ERROR, TAG,
+                        "Invalid System Prompt patch configuration ignored; host prompt is unchanged",
+                        error);
+            }
+            return null;
+        }
     }
 
     private boolean isAgentTraceEnabled() {
@@ -546,17 +656,6 @@ public final class XiaoAiMcpModule extends XposedModule {
 
         boolean reloadInstalled = prepareReload(targets)
                 && installManagerCaptureHook(targets.syncMethod());
-        if (reloadInstalled) {
-            try {
-                installPreferenceListener();
-            } catch (Throwable error) {
-                log(Log.ERROR, TAG,
-                        "Preference listener unavailable; configuration applies next startup",
-                        error);
-                reloadMethod = null;
-                reloadInstalled = false;
-            }
-        }
         log(Log.INFO, TAG, "Hook capabilities: text=" + textInstalled
                 + ", object=" + objectInstalled + ", liveReload=" + reloadInstalled);
     }
@@ -1080,9 +1179,30 @@ public final class XiaoAiMcpModule extends XposedModule {
             if (key == null || BridgeContract.PREF_SERVERS_JSON.equals(key)) {
                 requestReload();
             }
+            if (key == null || BridgeContract.PREF_PROMPT_PATCH_JSON.equals(key)) {
+                invalidatePromptMemoryCache();
+            }
         };
         preferenceListener = listener;
         preferences.registerOnSharedPreferenceChangeListener(listener);
+    }
+
+    private void invalidatePromptMemoryCache() {
+        Method method = promptCacheInvalidatorMethod;
+        if (method == null) {
+            log(Log.INFO, TAG,
+                    "System Prompt configuration changed; restart XiaoAi to clear its prompt cache");
+            return;
+        }
+        try {
+            method.invoke(promptCacheInvalidator);
+            log(Log.INFO, TAG,
+                    "System Prompt memory cache invalidated; changes apply to the next conversation");
+        } catch (Throwable error) {
+            log(Log.WARN, TAG,
+                    "Unable to invalidate System Prompt cache; restart XiaoAi to apply changes",
+                    error);
+        }
     }
 
     private void requestReload() {

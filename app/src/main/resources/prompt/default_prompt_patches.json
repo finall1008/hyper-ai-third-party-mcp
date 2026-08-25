@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "patches": [
+    {
+      "id": "default-v1-dependency-principle",
+      "enabled": true,
+      "agent_id": "osbot.main",
+      "file_name": "tool_selection_rules.md",
+      "find": "**原则：一轮内能并发的工具，绝不拆到多轮。**",
+      "replacement": "**原则：只并发执行互不依赖、且参数已经由已查看的 schema 完整确定的工具调用。存在 help → call、查询 → 操作或上一步输出 → 下一步输入依赖时，必须串行执行。**"
+    },
+    {
+      "id": "default-v1-no-speculative-parallelism",
+      "enabled": true,
+      "agent_id": "osbot.main",
+      "file_name": "tool_selection_rules.md",
+      "find": "- **DON'T**：反复\"看一步走一步\"。如果下一步能预判（几乎总能预判），就把可预判的工具一起发。",
+      "replacement": "- **DON'T**：为减少轮次猜测尚未取得的工具名、参数、ID、坐标或 schema。下一步参数依赖 help 或查询结果时，等待结果后再调用。"
+    },
+    {
+      "id": "default-v1-explicit-dependencies",
+      "enabled": true,
+      "agent_id": "osbot.main",
+      "file_name": "tool_selection_rules.md",
+      "find": "- **依赖时才串行**：只有存在**显式输入输出依赖**（如 `app list --query` 先拿包名 → `securitycenter memory-clean --apps <pkg>` 才能填参数）时才拆两轮。",
+      "replacement": "- **依赖必须串行**：包括 help → 具体工具调用、查询 → 操作，以及任何需要上一步返回的工具名、schema、ID、坐标或其他参数的流程。"
+    },
+    {
+      "id": "default-v1-complete-json-schema",
+      "enabled": true,
+      "agent_id": "osbot.main",
+      "file_name": "tool_selection_rules.md",
+      "find": "- **严格按 schema 类型传参**：schema 里声明 `type: integer` / `type: number` 的字段必须传 number（`1`），不能传 `\"1\"`；`type: boolean` 必须传 `true` / `false`，不能传 `\"true\"`。类型不符会被工具或服务端拒收，触发一次多余的\"错误重试轮次\"。",
+      "replacement": "- **严格遵守完整 JSON Schema**：调用前逐字段核对 required、type、enum、格式及约束。`type: integer` / `number` 传 JSON number，`type: boolean` 传 JSON boolean，`type: string` 必须传 JSON string；经纬度等语义上是数字的值，只要 schema 声明为 string，也必须加引号传字符串。不得凭字段含义覆盖 schema。"
+    },
+    {
+      "id": "default-v1-classify-errors",
+      "enabled": true,
+      "agent_id": "osbot.main",
+      "file_name": "tool_selection_rules.md",
+      "find": "- **错误是确定性的**：工具/命令不存在 = 该能力确定不可用（不是你调错了名字）；同一调用失败 2 次 = 真的不可用（不是重试就能好）。遇到这些，如实告知用户即可。",
+      "replacement": "- **错误必须分类**：工具失败后区分工具名或参数错误、schema 校验、权限、网络、限流、临时服务异常和能力缺失；根据错误信息修正或告知用户。不得仅因同一调用失败 2 次就断言能力永久不可用，也不得用无变化的参数盲目重试。"
+    },
+    {
+      "id": "default-v1-mcp-tool-help",
+      "enabled": true,
+      "agent_id": "osbot.main",
+      "file_name": "tool_selection_rules.md",
+      "find": "- 流程：`help \"<provider>\"` 获取工具列表（含参数）→ 直接调用，无需再 help 单个工具。多 provider 用逗号合并：`help \"amap,hellobike\"`。`<provider>` 必须用英文 ID。",
+      "replacement": "- 流程：先 `help \"<provider>\"` 获取工具列表并选择具体工具；调用前必须继续执行 `help \"<provider>__<tool>\"`，以单个工具返回的最新 schema 为准逐字段构造参数。多 provider 可用逗号合并查询 provider help；`<provider>` 必须用英文 ID。"
+    }
+  ]
+}

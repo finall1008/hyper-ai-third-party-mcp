@@ -73,6 +73,9 @@ class MainActivity : ComponentActivity(), BridgeApplication.ServiceStateListener
                     onOpenFilePolicy = {
                         startActivity(Intent(this, FilePolicyActivity::class.java))
                     },
+                    onOpenPromptPatches = {
+                        startActivity(Intent(this, PromptPatchActivity::class.java))
+                    },
                     onAgentTraceEnabledChange = ::setAgentTraceEnabled,
                     onEdit = ::edit,
                     onEnabledChange = ::setServerEnabled,
@@ -239,6 +242,7 @@ private fun MainScreen(
     onDismissError: () -> Unit,
     onAdd: () -> Unit,
     onOpenFilePolicy: () -> Unit,
+    onOpenPromptPatches: () -> Unit,
     onAgentTraceEnabledChange: (Boolean) -> Unit,
     onEdit: (McpServer) -> Unit,
     onEnabledChange: (McpServer, Boolean) -> Unit,
@@ -319,6 +323,20 @@ private fun MainScreen(
                     Text("文件访问权限", style = MiuixTheme.textStyles.body1)
                     Text(
                         "配置允许超级小爱访问的 /sdcard 目录及风险确认策略",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+            }
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    insideMargin = PaddingValues(16.dp),
+                    onClick = if (state.editingEnabled) onOpenPromptPatches else null,
+                ) {
+                    Text("System Prompt 补丁", style = MiuixTheme.textStyles.body1)
+                    Text(
+                        "编辑 Prompt 替换规则并预览红删绿增的单栏 diff",
                         style = MiuixTheme.textStyles.footnote1,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
