@@ -39,6 +39,8 @@ import io.github.finall1008.xiaoaimcp.prompt.PromptPatchCodec;
 import io.github.finall1008.xiaoaimcp.prompt.PromptPatchConfig;
 import io.github.finall1008.xiaoaimcp.prompt.PromptPatchEngine;
 import io.github.finall1008.xiaoaimcp.prompt.PromptPatchResult;
+import io.github.finall1008.xiaoaimcp.timeout.FirstOutputTimeoutConfig;
+import io.github.finall1008.xiaoaimcp.timeout.FirstOutputTimeoutRepository;
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.XposedModuleInterface;
@@ -171,6 +173,7 @@ public final class XiaoAiMcpModule extends XposedModule {
         ClassCatalog catalog = new CachingClassCatalog(new DexClassCatalog(applicationInfo));
         remotePreferences = getRemotePreferences(BridgeContract.PREF_GROUP);
         boolean agentTraceEnabled = isAgentTraceEnabled();
+        FirstOutputTimeoutConfig firstOutputTimeoutConfig = loadFirstOutputTimeoutConfig();
 
         ResolvedHookTargets knownMcpTargets = HookTargetResolver.resolveKnown(hostClassLoader);
         FilePolicyHookTargets knownFileTargets = FilePolicyHookResolver.resolveKnown(
@@ -180,8 +183,14 @@ public final class XiaoAiMcpModule extends XposedModule {
         AgentTraceTargets knownAgentTraceTargets = agentTraceEnabled
                 ? AgentTraceTargetResolver.resolveKnown(hostClassLoader)
                 : null;
+        FirstOutputTimeoutTargets knownFirstOutputTimeoutTargets =
+                firstOutputTimeoutConfig.overridesHost()
+                        ? FirstOutputTimeoutTargetResolver.resolveKnown(hostClassLoader)
+                        : null;
         if (knownMcpTargets == null || knownFileTargets == null || knownPromptTargets == null
-                || (agentTraceEnabled && !knownAgentTraceTargets.hasAllCapabilities())) {
+                || (agentTraceEnabled && !knownAgentTraceTargets.hasAllCapabilities())
+                || (firstOutputTimeoutConfig.overridesHost()
+                        && knownFirstOutputTimeoutTargets == null)) {
             try {
                 dexHints = DexKitTargetLocator.discover(hostClassLoader);
                 log(Log.INFO, TAG, "DexKit discovery: classes=" + dexHints.classNames().size()
@@ -249,6 +258,34 @@ public final class XiaoAiMcpModule extends XposedModule {
         } else {
             log(Log.INFO, TAG, "Agent Trace disabled by module preference; no trace hooks installed");
         }
+        boolean firstOutputTimeoutInstalled = false;
+        String firstOutputTimeoutResolver = "host-default";
+        if (firstOutputTimeoutConfig.overridesHost()) {
+            try {
+                FirstOutputTimeoutTargets timeoutTargets =
+                        knownFirstOutputTimeoutTargets != null
+                                ? knownFirstOutputTimeoutTargets
+                                : FirstOutputTimeoutTargetResolver.resolve(
+                                        hostClassLoader,
+                                        catalog,
+                                        dexHints
+                                );
+                firstOutputTimeoutInstalled = installFirstOutputTimeoutHook(
+                        timeoutTargets,
+                        firstOutputTimeoutConfig
+                );
+                firstOutputTimeoutResolver = firstOutputTimeoutInstalled
+                        ? timeoutTargets.mode() : "unavailable";
+            } catch (Throwable error) {
+                firstOutputTimeoutResolver = "unavailable";
+                log(Log.WARN, TAG,
+                        "First-output timeout override unavailable; host timeout is unchanged",
+                        error);
+            }
+        } else {
+            log(Log.INFO, TAG,
+                    "First-output timeout follows host default; no timeout Hook installed");
+        }
         if (mcpInstalled || promptInstalled) {
             try {
                 installPreferenceListener();
@@ -258,13 +295,55 @@ public final class XiaoAiMcpModule extends XposedModule {
                         error);
             }
         }
-        if (!mcpInstalled && !filePolicyInstalled && !agentTraceInstalled && !promptInstalled) {
+        if (!mcpInstalled && !filePolicyInstalled && !agentTraceInstalled && !promptInstalled
+                && !firstOutputTimeoutInstalled) {
             throw new IllegalStateException("No compatible module capability found");
         }
         log(Log.INFO, TAG, "XiaoAi " + versionName + " accepted (minimum 8.0); mcp="
                 + mcpResolver + ", filePolicy=" + filePolicyInstalled
                 + ", agentTrace=" + agentTraceResolver
-                + ", promptPatch=" + promptResolver);
+                + ", promptPatch=" + promptResolver
+                + ", firstOutputTimeout=" + firstOutputTimeoutResolver);
+    }
+
+    private FirstOutputTimeoutConfig loadFirstOutputTimeoutConfig() {
+        SharedPreferences preferences = remotePreferences;
+        if (preferences == null) {
+            return FirstOutputTimeoutConfig.hostDefault();
+        }
+        try {
+            return new FirstOutputTimeoutRepository(preferences).loadStrict();
+        } catch (Throwable error) {
+            log(Log.WARN, TAG,
+                    "Invalid first-output timeout configuration ignored; host timeout is unchanged",
+                    error);
+            return FirstOutputTimeoutConfig.hostDefault();
+        }
+    }
+
+    private boolean installFirstOutputTimeoutHook(
+            FirstOutputTimeoutTargets targets,
+            FirstOutputTimeoutConfig config
+    ) {
+        try {
+            long overrideMillis = config.resolveTimeoutMillis(0L);
+            tryDeoptimize(targets.timeoutGetter());
+            hook(targets.timeoutGetter())
+                    .setId("xiaoai-first-output-timeout")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> overrideMillis);
+            String configuredValue = overrideMillis == Long.MAX_VALUE
+                    ? "unlimited" : overrideMillis + "ms";
+            log(Log.INFO, TAG, "First-output timeout override installed: resolver="
+                    + targets.mode() + ", value=" + configuredValue
+                    + "; restart XiaoAi to apply future changes");
+            return true;
+        } catch (Throwable error) {
+            log(Log.WARN, TAG,
+                    "First-output timeout Hook unavailable; host timeout is unchanged",
+                    error);
+            return false;
+        }
     }
 
     private boolean installPromptHook(PromptHookTargets targets) {

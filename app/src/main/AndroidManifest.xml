@@ -21,6 +21,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".ui.FirstOutputTimeoutActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".ui.FilePolicyActivity"
             android:exported="false" />
 

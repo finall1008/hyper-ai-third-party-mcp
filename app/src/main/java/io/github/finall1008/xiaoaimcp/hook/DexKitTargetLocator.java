@@ -23,7 +23,8 @@ final class DexKitTargetLocator {
             "checkToolRisk",
             "checkCliCommand",
             "confirmByCategory$runtime",
-            "requestConsent$runtime"
+            "requestConsent$runtime",
+            "getFirstVisibleOutputTimeoutMs$runtime"
     );
     private static final List<String> AGENT_TRACE_STRING_ANCHORS = List.of(
             "reasoning_delta",
@@ -48,6 +49,8 @@ final class DexKitTargetLocator {
             "custom_prompt.md",
             "complex_task_prompt.md"
     );
+    private static final String FIRST_OUTPUT_TIMEOUT_ANCHOR =
+            "LLM first-visible-output timeout after ";
 
     private static volatile boolean nativeLoaded;
 
@@ -80,6 +83,12 @@ final class DexKitTargetLocator {
             ));
             matchedMethods += anchorMethods.size();
             addDeclaringClasses(anchorMethods, allClasses);
+
+            List<MethodData> timeoutMethods = bridge.findMethod(FindMethod.create().matcher(
+                    MethodMatcher.create().usingStrings(FIRST_OUTPUT_TIMEOUT_ANCHOR)
+            ));
+            matchedMethods += timeoutMethods.size();
+            addDeclaringClasses(timeoutMethods, allClasses);
 
             for (String anchor : AGENT_TRACE_STRING_ANCHORS) {
                 List<MethodData> methods = bridge.findMethod(FindMethod.create().matcher(

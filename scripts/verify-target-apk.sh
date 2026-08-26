@@ -13,20 +13,22 @@ if [ ! -f "$APK" ]; then
     exit 1
 fi
 
-DEX_STRINGS=$(unzip -p "$APK" 'classes*.dex' | strings)
+DEX_STRINGS_FILE=$(mktemp "${TMPDIR:-/tmp}/xiaoai-dex-strings.XXXXXX")
+trap 'rm -f "$DEX_STRINGS_FILE"' EXIT HUP INT TERM
+unzip -p "$APK" 'classes*.dex' | strings > "$DEX_STRINGS_FILE"
 for MARKER in \
     'syncConfigAndDiscoverIfNeeded' \
     'reloadConfig' \
     'loadCatalogAndRegister' \
     'personal_mcp_servers.json'; do
-    if ! printf '%s\n' "$DEX_STRINGS" | rg -F -q "$MARKER"; then
+    if ! rg -F -q "$MARKER" "$DEX_STRINGS_FILE"; then
         echo "Missing compatibility marker: $MARKER" >&2
         exit 1
     fi
     echo "Found compatibility marker: $MARKER"
 done
 
-if printf '%s\n' "$DEX_STRINGS" | rg -F -q 'Ll8/w1;'; then
+if rg -F -q 'Ll8/w1;' "$DEX_STRINGS_FILE"; then
     echo "Found verified-profile manager marker: Ll8/w1;"
 else
     echo "Verified-profile manager marker not found; runtime structural discovery is required."
@@ -36,7 +38,7 @@ for MARKER in \
     'isExternalUserAsset' \
     'isCommandNameAllowed' \
     'checkToolRisk'; do
-    if printf '%s\n' "$DEX_STRINGS" | rg -F -q "$MARKER"; then
+    if rg -F -q "$MARKER" "$DEX_STRINGS_FILE"; then
         echo "Found file-policy discovery marker: $MARKER"
     else
         echo "File-policy discovery marker not found: $MARKER; that capability may degrade independently." >&2
@@ -52,7 +54,7 @@ for MARKER in \
     'MICLAW_THINKING_CHAIN' \
     'loadScript' \
     '__reactNativeBundleEndSuccess__'; do
-    if printf '%s\n' "$DEX_STRINGS" | rg -F -q "$MARKER"; then
+    if rg -F -q "$MARKER" "$DEX_STRINGS_FILE"; then
         echo "Found Agent Trace marker: $MARKER"
     else
         echo "Agent Trace marker not found: $MARKER; that capability may degrade independently." >&2
@@ -63,10 +65,20 @@ for MARKER in \
     'tool_selection_rules.md' \
     'custom_prompt.md' \
     'invalidateMemoryCache'; do
-    if printf '%s\n' "$DEX_STRINGS" | rg -F -q "$MARKER"; then
+    if rg -F -q "$MARKER" "$DEX_STRINGS_FILE"; then
         echo "Found System Prompt patch marker: $MARKER"
     else
         echo "System Prompt patch marker not found: $MARKER; that capability may degrade independently." >&2
+    fi
+done
+
+for MARKER in \
+    'getFirstVisibleOutputTimeoutMs$runtime' \
+    'LLM first-visible-output timeout after '; do
+    if rg -F -q "$MARKER" "$DEX_STRINGS_FILE"; then
+        echo "Found first-output timeout discovery marker: $MARKER"
+    else
+        echo "First-output timeout discovery marker not found: $MARKER; that capability may degrade independently." >&2
     fi
 done
 

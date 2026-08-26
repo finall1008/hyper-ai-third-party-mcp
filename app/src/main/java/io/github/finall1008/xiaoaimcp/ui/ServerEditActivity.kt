@@ -7,16 +7,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.displayCutout
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.union
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,11 +24,7 @@ import io.github.finall1008.xiaoaimcp.BridgeApplication
 import io.github.finall1008.xiaoaimcp.config.McpConfigValidator
 import io.github.finall1008.xiaoaimcp.config.McpServer
 import io.github.finall1008.xiaoaimcp.config.RemoteConfigRepository
-import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.preference.CheckboxLocation
@@ -164,30 +153,20 @@ private fun ServerEditScreen(
     fatalMessage: String?,
     onDismissFatal: () -> Unit,
 ) {
-    Scaffold(
-        topBar = {
-            SmallTopAppBar(
-                title = if (editing) "编辑 MCP 服务器" else "添加 MCP 服务器",
-                subtitle = "保存后通知超级小爱在线重载",
-                navigationIcon = { BackButton(onBack) },
+    BridgePageScaffold(
+        title = if (editing) "编辑 MCP 服务器" else "添加 MCP 服务器",
+        onBack = onBack,
+        bottomBar = {
+            BridgeSaveBar(
+                text = "保存并应用",
+                enabled = fatalMessage == null,
+                onClick = onSave,
             )
         },
-        bottomBar = {
-            Button(
-                onClick = onSave,
-                enabled = fatalMessage == null,
-                modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp),
-                colors = ButtonDefaults.buttonColorsPrimary(),
-            ) {
-                Text("保存并应用")
-            }
-        },
-        contentWindowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) { padding, scrollBehavior ->
+        BridgePageList(
+            scaffoldPadding = padding,
+            scrollBehavior = scrollBehavior,
         ) {
             item { SectionLabel("基本信息") }
             item {

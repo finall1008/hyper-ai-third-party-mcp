@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add a configurable first-visible-output timeout with host-default, custom-seconds, and unlimited
+  modes, using verified, DexKit, and structural target discovery that fails closed.
+- Reorganize the MIUIX configuration app into Home and About pages, unify large-title navigation,
+  group related settings, and add a root-backed action for restarting Super XiaoAi.
+- Rename the user-facing module and app to “超级小爱增强” to reflect its broader MCP, Agent,
+  Prompt, timeout, and file capabilities. The application ID remains unchanged.
+
 ## 1.4.0 - 2026-08-26
 
 - Add an independent in-memory System Prompt patch capability for all agents, with exact

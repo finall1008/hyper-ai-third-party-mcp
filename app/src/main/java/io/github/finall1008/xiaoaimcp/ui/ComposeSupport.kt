@@ -15,12 +15,23 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -28,25 +39,36 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import kotlin.math.max
+import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
+import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
+import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.TextStyles
 import top.yukonga.miuix.kmp.theme.ThemeController
 import top.yukonga.miuix.kmp.theme.defaultTextStyles
+import top.yukonga.miuix.kmp.window.WindowDialog
 
 @Composable
 internal fun BridgeTheme(
@@ -160,7 +182,6 @@ internal fun BackButton(onClick: () -> Unit) {
     val layoutDirection = LocalLayoutDirection.current
     IconButton(
         onClick = onClick,
-        modifier = Modifier.padding(start = 4.dp),
     ) {
         Icon(
             imageVector = MiuixIcons.Back,
@@ -170,6 +191,131 @@ internal fun BackButton(onClick: () -> Unit) {
             },
             tint = MiuixTheme.colorScheme.onBackground,
         )
+    }
+}
+
+@Composable
+internal fun BridgePageScaffold(
+    title: String,
+    onBack: (() -> Unit)? = null,
+    actions: @Composable RowScope.() -> Unit = {},
+    bottomBar: @Composable () -> Unit = {},
+    content: @Composable (PaddingValues, ScrollBehavior) -> Unit,
+) {
+    val scrollBehavior = MiuixScrollBehavior()
+    Scaffold(
+        topBar = {
+            val surfaceColor = MiuixTheme.colorScheme.surface
+            val shadowColor = MiuixTheme.colorScheme.onSurface
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(),
+            ) {
+                TopAppBar(
+                    title = title,
+                    largeTitle = title,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer {
+                            val progress = max(
+                                scrollBehavior.state.collapsedFraction,
+                                scrollBehavior.state.overlappedFraction,
+                            ).coerceIn(0f, 1f)
+                            shadowElevation = 10.dp.toPx() * progress
+                            ambientShadowColor = shadowColor.copy(alpha = 0.12f)
+                            spotShadowColor = shadowColor.copy(alpha = 0.16f)
+                        }
+                        .drawWithContent {
+                            val progress = max(
+                                scrollBehavior.state.collapsedFraction,
+                                scrollBehavior.state.overlappedFraction,
+                            ).coerceIn(0f, 1f)
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    colorStops = arrayOf(
+                                        0f to surfaceColor,
+                                        0.72f to surfaceColor.copy(
+                                            alpha = 1f - 0.08f * progress,
+                                        ),
+                                        1f to surfaceColor.copy(
+                                            alpha = 0.82f - 0.18f * progress,
+                                        ),
+                                    ),
+                                ),
+                            )
+                            drawContent()
+                        },
+                    color = ComposeColor.Transparent,
+                    navigationIcon = {
+                        if (onBack != null) BackButton(onBack)
+                    },
+                    actions = actions,
+                    scrollBehavior = scrollBehavior,
+                )
+            }
+        },
+        bottomBar = bottomBar,
+        contentWindowInsets = WindowInsets.systemBars.union(WindowInsets.displayCutout),
+    ) { padding -> content(padding, scrollBehavior) }
+}
+
+@Composable
+internal fun BridgePageList(
+    scaffoldPadding: PaddingValues,
+    scrollBehavior: ScrollBehavior,
+    modifier: Modifier = Modifier,
+    extraBottomPadding: androidx.compose.ui.unit.Dp = 0.dp,
+    content: LazyListScope.() -> Unit,
+) {
+    LazyColumn(
+        modifier = modifier
+            .fillMaxSize()
+            .nestedScroll(scrollBehavior.nestedScrollConnection),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            top = scaffoldPadding.calculateTopPadding() + 12.dp,
+            end = 16.dp,
+            bottom = scaffoldPadding.calculateBottomPadding() + 12.dp + extraBottomPadding,
+        ),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        content = content,
+    )
+}
+
+@Composable
+internal fun PreferenceIcon(
+    imageVector: ImageVector,
+    contentDescription: String? = null,
+) {
+    Icon(
+        imageVector = imageVector,
+        contentDescription = contentDescription,
+        modifier = Modifier.size(24.dp),
+        tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+    )
+}
+
+@Composable
+internal fun BridgeSaveBar(
+    text: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.End,
+    ) {
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier.widthIn(min = 144.dp),
+            colors = ButtonDefaults.buttonColorsPrimary(),
+        ) {
+            Text(text)
+        }
     }
 }
 
@@ -189,7 +335,7 @@ internal fun MessageDialog(
     title: String = "提示",
     onDismiss: () -> Unit,
 ) {
-    OverlayDialog(
+    WindowDialog(
         show = message != null,
         title = title,
         onDismissRequest = onDismiss,
@@ -217,7 +363,7 @@ internal fun ConfirmDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    OverlayDialog(
+    WindowDialog(
         show = show,
         title = title,
         onDismissRequest = onDismiss,
