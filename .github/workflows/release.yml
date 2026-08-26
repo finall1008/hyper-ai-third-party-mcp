@@ -83,10 +83,28 @@ jobs:
         if: always()
         run: rm -f "${{ runner.temp }}/release-keystore.jks"
 
+      - name: Prepare release notes
+        if: steps.signing.outputs.configured == 'true'
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          awk -v version="$VERSION" '
+            index($0, "## " version " - ") == 1 || $0 == "## " version {
+              printing = 1
+              next
+            }
+            printing && /^## / { exit }
+            printing { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+
       - name: Publish APK to GitHub Release
         if: steps.signing.outputs.configured == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
+          name: 超级小爱增强 ${{ inputs.tag || github.ref_name }}
+          body_path: release-notes.md
           files: app/build/outputs/apk/release/app-release.apk
           fail_on_unmatched_files: true
