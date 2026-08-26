@@ -8,20 +8,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -41,27 +34,29 @@ import io.github.finall1008.xiaoaimcp.filepolicy.FilePolicyCodec
 import io.github.finall1008.xiaoaimcp.filepolicy.FilePolicyConfig
 import io.github.finall1008.xiaoaimcp.filepolicy.FilePolicyRepository
 import io.github.finall1008.xiaoaimcp.filepolicy.MutationConfirmationPolicy
-import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Add
 import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.Edit
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.icon.extended.Folder
+import top.yukonga.miuix.kmp.icon.extended.Lock
 import top.yukonga.miuix.kmp.preference.CheckboxLocation
 import top.yukonga.miuix.kmp.preference.CheckboxPreference
+import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.RadioButtonLocation
 import top.yukonga.miuix.kmp.preference.RadioButtonPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.window.WindowDialog
 
 class FilePolicyActivity : ComponentActivity() {
     private var repository: FilePolicyRepository? = null
@@ -219,28 +214,13 @@ private fun FilePolicyScreen(
 ) {
     var editor by remember { mutableStateOf<RuleEditor?>(null) }
     var pendingDelete by remember { mutableStateOf<Pair<Int, FileAccessRule>?>(null) }
-    val navigationBarPadding = WindowInsets.navigationBars
-        .asPaddingValues()
-        .calculateBottomPadding()
-    Scaffold(
-        topBar = {
-            SmallTopAppBar(
-                title = "文件访问权限",
-                subtitle = "按目录精确授权超级小爱文件能力",
-                navigationIcon = { BackButton(onBack) },
-            )
-        },
-        contentWindowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(
-                start = 16.dp,
-                top = 12.dp,
-                end = 16.dp,
-                bottom = 12.dp + navigationBarPadding,
-            ),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+    BridgePageScaffold(
+        title = "文件访问权限",
+        onBack = onBack,
+    ) { padding, scrollBehavior ->
+        BridgePageList(
+            scaffoldPadding = padding,
+            scrollBehavior = scrollBehavior,
         ) {
             item {
                 Card(
@@ -269,48 +249,40 @@ private fun FilePolicyScreen(
                         } else {
                             "仅对下方 ${config.rules().size} 条目录规则生效"
                         },
+                        startAction = { PreferenceIcon(MiuixIcons.Lock) },
                         enabled = editingEnabled,
                     )
-                }
-            }
-            item {
-                Button(
-                    onClick = { editor = RuleEditor(-1, RuleDraft()) },
-                    enabled = editingEnabled,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                ) {
-                    Text("添加目录规则")
+                    ArrowPreference(
+                        title = "添加目录规则",
+                        summary = "按规范化目录路径授予文件能力",
+                        startAction = { PreferenceIcon(MiuixIcons.Add) },
+                        enabled = editingEnabled,
+                        onClick = { editor = RuleEditor(-1, RuleDraft()) },
+                    )
                 }
             }
             item { SectionLabel("目录规则", Modifier.padding(top = 8.dp)) }
-            if (config.rules().isEmpty()) {
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        insideMargin = PaddingValues(24.dp),
-                    ) {
-                        Text(
-                            "尚未配置目录规则",
-                            modifier = Modifier.align(Alignment.CenterHorizontally),
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    if (config.rules().isEmpty()) {
+                        BasicComponent(
+                            title = "尚未配置目录规则",
+                            summary = "使用上方入口添加第一条授权规则",
+                            startAction = { PreferenceIcon(MiuixIcons.Folder) },
+                            enabled = false,
                         )
+                    } else {
+                        config.rules().forEachIndexed { index, rule ->
+                            RuleRow(
+                                rule = rule,
+                                editingEnabled = editingEnabled,
+                                onEdit = { editor = RuleEditor(index, RuleDraft.from(rule)) },
+                                onDelete = { pendingDelete = index to rule },
+                            )
+                        }
                     }
                 }
-            } else {
-                itemsIndexed(
-                    items = config.rules(),
-                    key = { _, rule -> rule.path() },
-                ) { index, rule ->
-                    RuleCard(
-                        rule = rule,
-                        editingEnabled = editingEnabled,
-                        onEdit = { editor = RuleEditor(index, RuleDraft.from(rule)) },
-                        onDelete = { pendingDelete = index to rule },
-                    )
-                }
             }
-            item { Spacer(Modifier.height(8.dp)) }
         }
         RuleEditDialog(
             editor = editor,
@@ -338,7 +310,7 @@ private fun FilePolicyScreen(
 }
 
 @Composable
-private fun RuleCard(
+private fun RuleRow(
     rule: FileAccessRule,
     editingEnabled: Boolean,
     onEdit: () -> Unit,
@@ -352,15 +324,40 @@ private fun RuleCard(
         if (rule.allowRecursiveDelete()) add("锁屏递归删除")
         add(confirmationPolicyLabel(rule.confirmationPolicy()))
     }
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        insideMargin = PaddingValues(16.dp),
+    BasicComponent(
+        startAction = { PreferenceIcon(MiuixIcons.Folder) },
+        bottomAction = if (editingEnabled) {
+            {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+                ) {
+                    IconButton(onClick = onEdit) {
+                        Icon(
+                            imageVector = MiuixIcons.Edit,
+                            contentDescription = "编辑 ${rule.path()}",
+                            tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                        )
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            imageVector = MiuixIcons.Delete,
+                            contentDescription = "删除 ${rule.path()}",
+                            tint = MiuixTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+        } else {
+            null
+        },
         onClick = if (editingEnabled) onEdit else null,
+        enabled = editingEnabled,
     ) {
         Text(
             rule.path(),
             style = MiuixTheme.textStyles.body1,
-            maxLines = 2,
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         Text(
@@ -368,27 +365,6 @@ private fun RuleCard(
             style = MiuixTheme.textStyles.footnote1,
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         )
-        if (editingEnabled) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
-            ) {
-                IconButton(onClick = onEdit) {
-                    Icon(
-                        imageVector = MiuixIcons.Edit,
-                        contentDescription = "编辑 ${rule.path()}",
-                        tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                    )
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        imageVector = MiuixIcons.Delete,
-                        contentDescription = "删除 ${rule.path()}",
-                        tint = MiuixTheme.colorScheme.error,
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -400,12 +376,12 @@ private fun RuleEditDialog(
     onSave: (Int, RuleDraft) -> String?,
 ) {
     var validationMessage by remember(editor?.index) { mutableStateOf<String?>(null) }
-    OverlayDialog(
+    WindowDialog(
         show = editor != null,
         title = if (editor?.index == -1) "添加目录规则" else "编辑目录规则",
         onDismissRequest = onDismiss,
     ) {
-        val current = editor ?: return@OverlayDialog
+        val current = editor ?: return@WindowDialog
         Column(
             modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp),
         ) {

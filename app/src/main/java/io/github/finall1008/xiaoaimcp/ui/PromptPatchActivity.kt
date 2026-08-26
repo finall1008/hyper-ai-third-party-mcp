@@ -9,17 +9,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -43,25 +37,28 @@ import io.github.finall1008.xiaoaimcp.prompt.PromptPatchRepository
 import io.github.finall1008.xiaoaimcp.prompt.PromptLineDiff
 import io.github.finall1008.xiaoaimcp.prompt.InstalledPromptPreviewLoader
 import io.github.finall1008.xiaoaimcp.prompt.PromptPreviewDocument
-import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Add
 import top.yukonga.miuix.kmp.icon.extended.Delete
 import top.yukonga.miuix.kmp.icon.extended.Edit
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.icon.extended.File
+import top.yukonga.miuix.kmp.icon.extended.ListView
+import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.preference.CheckboxLocation
 import top.yukonga.miuix.kmp.preference.CheckboxPreference
+import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.window.WindowDialog
 import java.util.UUID
 
 class PromptPatchActivity : ComponentActivity() {
@@ -230,26 +227,13 @@ private fun PromptPatchScreen(
     var editor by remember { mutableStateOf<PromptPatchEditor?>(null) }
     var pendingDelete by remember { mutableStateOf<Int?>(null) }
     var showPreview by remember { mutableStateOf(false) }
-    val bottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    Scaffold(
-        topBar = {
-            SmallTopAppBar(
-                title = "System Prompt 补丁",
-                subtitle = "运行时精确替换，不修改宿主文件",
-                navigationIcon = { BackButton(onBack) },
-            )
-        },
-        contentWindowInsets = WindowInsets.statusBars.union(WindowInsets.displayCutout),
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(
-                start = 16.dp,
-                top = 12.dp,
-                end = 16.dp,
-                bottom = 12.dp + bottomPadding,
-            ),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+    BridgePageScaffold(
+        title = "System Prompt 补丁",
+        onBack = onBack,
+    ) { padding, scrollBehavior ->
+        BridgePageList(
+            scaffoldPadding = padding,
+            scrollBehavior = scrollBehavior,
         ) {
             item {
                 Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(16.dp)) {
@@ -262,62 +246,56 @@ private fun PromptPatchScreen(
                 }
             }
             item {
-                SwitchPreference(
-                    title = "启用 Prompt 补丁",
-                    summary = "总开关关闭时返回超级小爱原始 Prompt",
-                    checked = config.enabled(),
-                    onCheckedChange = onEnabledChange,
-                    enabled = editingEnabled,
-                )
-            }
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    insideMargin = PaddingValues(16.dp),
-                    onClick = {
-                        onReloadPreview()
-                        showPreview = true
-                    },
-                ) {
-                    Text("System Prompt 变更预览", style = MiuixTheme.textStyles.body1)
-                    Text(
-                        previewSummary(previewDocuments, previewError),
-                        style = MiuixTheme.textStyles.footnote1,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    SwitchPreference(
+                        title = "启用 Prompt 补丁",
+                        summary = "关闭时使用超级小爱原始 Prompt",
+                        checked = config.enabled(),
+                        onCheckedChange = onEnabledChange,
+                        startAction = { PreferenceIcon(MiuixIcons.Settings) },
+                        enabled = editingEnabled,
+                    )
+                    ArrowPreference(
+                        title = "System Prompt 变更预览",
+                        summary = previewSummary(previewDocuments, previewError),
+                        startAction = { PreferenceIcon(MiuixIcons.ListView) },
+                        onClick = {
+                            onReloadPreview()
+                            showPreview = true
+                        },
+                    )
+                    ArrowPreference(
+                        title = "添加自定义补丁",
+                        summary = "新增一条精确替换规则",
+                        startAction = { PreferenceIcon(MiuixIcons.Add) },
+                        enabled = editingEnabled,
+                        onClick = { editor = PromptPatchEditor(-1, PromptPatchDraft()) },
                     )
                 }
-            }
-            item {
-                Button(
-                    onClick = { editor = PromptPatchEditor(-1, PromptPatchDraft()) },
-                    enabled = editingEnabled,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                ) { Text("添加自定义补丁") }
             }
             item { SectionLabel("Prompt 补丁规则", Modifier.padding(top = 4.dp)) }
-            if (config.patches().isEmpty()) {
-                item {
-                    Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(20.dp)) {
-                        Text(
-                            "尚未添加 Prompt 补丁规则",
-                            modifier = Modifier.align(Alignment.CenterHorizontally),
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    if (config.patches().isEmpty()) {
+                        BasicComponent(
+                            title = "尚未添加补丁规则",
+                            summary = "使用上方入口添加第一条规则",
+                            startAction = { PreferenceIcon(MiuixIcons.File) },
+                            enabled = false,
                         )
+                    } else {
+                        config.patches().forEachIndexed { index, patch ->
+                            PromptPatchRow(
+                                patch,
+                                editingEnabled,
+                                { editor = PromptPatchEditor(index, PromptPatchDraft.from(patch)) },
+                                { onPatchEnabledChange(index, it) },
+                                { pendingDelete = index },
+                            )
+                        }
                     }
                 }
-            } else {
-                itemsIndexed(config.patches(), key = { _, patch -> patch.id() }) { index, patch ->
-                    PromptPatchCard(
-                        patch,
-                        editingEnabled,
-                        { editor = PromptPatchEditor(index, PromptPatchDraft.from(patch)) },
-                        { onPatchEnabledChange(index, it) },
-                        { pendingDelete = index },
-                    )
-                }
             }
-            item { Spacer(Modifier.height(8.dp)) }
         }
         PromptPatchEditDialog(editor, { editor = it }, { editor = null }, onSavePatch)
         PromptDiffDialog(
@@ -357,7 +335,7 @@ private fun PromptDiffDialog(
             PromptLineDiff.calculate(it.originalText(), it.patchedText())
         }.orEmpty()
     }
-    OverlayDialog(
+    WindowDialog(
         show = show,
         title = "System Prompt 变更预览",
         onDismissRequest = onDismiss,
@@ -541,46 +519,51 @@ private fun FullPromptDiffLine(line: PromptLineDiff.Line) {
 private val DIFF_ADDITION_COLOR = Color(0xFF238636)
 
 @Composable
-private fun PromptPatchCard(
+private fun PromptPatchRow(
     patch: PromptPatch,
     editingEnabled: Boolean,
     onEdit: () -> Unit,
     onEnabledChange: (Boolean) -> Unit,
     onDelete: () -> Unit,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        insideMargin = PaddingValues(16.dp),
-        onClick = if (editingEnabled) onEdit else null,
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("${patch.agentId()} · ${patch.fileName()}", maxLines = 1,
-                    overflow = TextOverflow.Ellipsis)
-                Text(
-                    patch.findText().replace('\n', ' ').take(100),
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+    BasicComponent(
+        startAction = { PreferenceIcon(MiuixIcons.File) },
+        endActions = {
             Switch(
                 checked = patch.enabled(),
                 onCheckedChange = if (editingEnabled) onEnabledChange else null,
                 enabled = editingEnabled,
             )
-        }
-        if (editingEnabled) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                IconButton(onClick = onEdit) {
-                    Icon(MiuixIcons.Edit, "编辑补丁")
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(MiuixIcons.Delete, "删除补丁", tint = MiuixTheme.colorScheme.error)
+        },
+        bottomAction = if (editingEnabled) {
+            {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    IconButton(onClick = onEdit) {
+                        Icon(MiuixIcons.Edit, "编辑补丁")
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(MiuixIcons.Delete, "删除补丁", tint = MiuixTheme.colorScheme.error)
+                    }
                 }
             }
-        }
+        } else {
+            null
+        },
+        onClick = if (editingEnabled) onEdit else null,
+        enabled = editingEnabled,
+    ) {
+        Text(
+            "${patch.agentId()} · ${patch.fileName()}",
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            patch.findText().replace('\n', ' ').take(100),
+            style = MiuixTheme.textStyles.footnote1,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -592,12 +575,12 @@ private fun PromptPatchEditDialog(
     onSave: (Int, PromptPatchDraft) -> String?,
 ) {
     var validationMessage by remember(editor?.index) { mutableStateOf<String?>(null) }
-    OverlayDialog(
+    WindowDialog(
         show = editor != null,
         title = if (editor?.index == -1) "添加 Prompt 补丁" else "编辑 Prompt 补丁",
         onDismissRequest = onDismiss,
     ) {
-        val current = editor ?: return@OverlayDialog
+        val current = editor ?: return@WindowDialog
         Column(Modifier.fillMaxWidth().heightIn(max = 680.dp)) {
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
                 CheckboxPreference(
