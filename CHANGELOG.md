@@ -4,24 +4,21 @@
 
 ## 1.4.0 - 2026-08-26
 
-- Add a configurable first-visible-output timeout with host-default, custom-seconds, and unlimited
-  modes, using verified, DexKit, and structural target discovery that fails closed.
-- Reorganize the MIUIX configuration app into Home and About pages, unify large-title navigation,
-  group related settings, and add a root-backed action for restarting Super XiaoAi.
-- Rename the user-facing module and app to “超级小爱增强” to reflect its broader MCP, Agent,
-  Prompt, timeout, and file capabilities. The application ID remains unchanged.
-- Add an independent in-memory System Prompt patch capability for all agents, with exact
-  find-and-replace rules stored in Remote Preferences and fail-closed matching semantics.
-- Seed ordinary enabled reliability rules from a repository JSON resource for the verified XiaoAi
-  prompt, requiring per-tool MCP help, dependency-aware sequencing, complete JSON Schema type
-  adherence, and classified failure handling. Each seeded rule can be edited, disabled, or deleted.
-- Resolve the generic prompt-file reader through the verified profile, DexKit hints, and unique
-  structural fallback, and invalidate the host prompt cache after configuration changes when the
-  host capability is available.
-- Add a MIUIX configuration screen for ordered prompt patches and a full Prompt-file diff loaded
-  directly from the currently installed XiaoAi APK. Multiple Agent/file targets are listed, unchanged
-  lines remain visible, removals are red, and additions are green; no host session or refresh is required.
-- Migrate schema version 1's built-in-preset flag into ordinary version 2 patch entries.
+- 新增可配置的模型首次可见输出超时，支持跟随宿主、自定义秒数和不限制三种模式；
+  目标通过已验证配置、DexKit 和结构扫描发现，无法唯一匹配时保持宿主原有行为。
+- 重构 MIUIX 配置 App，拆分首页与关于页面，统一大标题导航并重新组织设置分组；
+  新增需要 Root 权限的超级小爱重启功能。
+- 模块和 App 的显示名称改为“超级小爱增强”，以覆盖 MCP、Agent、Prompt、超时和文件权限等增强能力；
+  application ID 保持不变。
+- 新增面向所有 Agent 的独立 System Prompt 内存补丁功能，使用 Remote Preferences 保存精确查找替换规则；
+  查找内容不是唯一匹配时跳过规则，不修改宿主 Prompt 文件。
+- 为已验证的超级小爱 Prompt 内置普通且默认启用的可靠性规则，要求按工具查看 MCP 帮助、
+  按数据依赖顺序执行步骤、完整遵守 JSON Schema 类型并分类处理失败；每条规则均可编辑、停用或删除。
+- Prompt 文件读取目标依次通过已验证配置、DexKit 提示和唯一结构回退解析；配置变更后，
+  在宿主能力可用时使 Prompt 缓存失效。
+- 新增 MIUIX System Prompt 补丁配置页，可直接读取当前安装的超级小爱 APK 并显示完整 Prompt 差异；
+  支持多个 Agent 和文件目标，保留未修改行，删除内容标红、新增内容标绿，无需启动宿主会话或刷新。
+- 将版本 1 中的内置预设标记迁移为版本 2 的普通补丁条目。
 
 ## 1.3.0 - 2026-08-25
 
