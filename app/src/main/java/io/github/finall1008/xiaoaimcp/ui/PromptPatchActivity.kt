@@ -37,6 +37,7 @@ import io.github.finall1008.xiaoaimcp.prompt.PromptPatchRepository
 import io.github.finall1008.xiaoaimcp.prompt.PromptLineDiff
 import io.github.finall1008.xiaoaimcp.prompt.InstalledPromptPreviewLoader
 import io.github.finall1008.xiaoaimcp.prompt.PromptPreviewDocument
+import io.github.finall1008.xiaoaimcp.prompt.PromptTargetType
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
@@ -55,6 +56,7 @@ import top.yukonga.miuix.kmp.icon.extended.ListView
 import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.preference.CheckboxLocation
 import top.yukonga.miuix.kmp.preference.CheckboxPreference
+import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -178,6 +180,7 @@ class PromptPatchActivity : ComponentActivity() {
 
 internal data class PromptPatchDraft(
     val enabled: Boolean = true,
+    val targetType: PromptTargetType = PromptTargetType.AGENT_PROMPT,
     val agentId: String = "*",
     val fileName: String = "tool_selection_rules.md",
     val findText: String = "",
@@ -187,6 +190,7 @@ internal data class PromptPatchDraft(
         val patch = PromptPatch(
             id,
             enabled,
+            targetType,
             agentId.trim(),
             fileName.trim(),
             findText,
@@ -199,6 +203,7 @@ internal data class PromptPatchDraft(
     companion object {
         fun from(patch: PromptPatch) = PromptPatchDraft(
             patch.enabled(),
+            patch.targetType(),
             patch.agentId(),
             patch.fileName(),
             patch.findText(),
@@ -239,7 +244,7 @@ private fun PromptPatchScreen(
                 Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(16.dp)) {
                     Text("生效说明", style = MiuixTheme.textStyles.body1)
                     Text(
-                        "补丁在超级小爱读取 Prompt 时应用。查找原文必须恰好匹配一次，否则跳过；通常下一次新会话生效，若缓存无法刷新请重启超级小爱。",
+                        "补丁在超级小爱读取 Agent、工具或记忆 Prompt 时应用。查找原文必须恰好匹配一次，否则跳过；保存后请重启超级小爱，避免继续使用已缓存的工具说明或会话头。",
                         style = MiuixTheme.textStyles.footnote1,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     )
@@ -375,7 +380,7 @@ private fun PromptDiffDialog(
                 }
                 !selected.available() -> {
                     Text(
-                        "${selected.agentId()} · ${selected.fileName()}",
+                        previewTargetLabel(selected),
                         style = MiuixTheme.textStyles.body1,
                     )
                     Text(
@@ -387,7 +392,7 @@ private fun PromptDiffDialog(
                 }
                 else -> {
                     Text(
-                        "${selected.agentId()} · ${selected.fileName()} · " +
+                        "${previewTargetLabel(selected)} · " +
                             "${selected.appliedPatchIds().size} 条已应用，" +
                             "${selected.skippedPatches().size} 条跳过",
                         style = MiuixTheme.textStyles.footnote1,
@@ -435,7 +440,7 @@ private fun PromptPreviewTargetCard(
         onClick = onClick,
     ) {
         Text(
-            "${document.agentId()} · ${document.fileName()}",
+            previewTargetLabel(document),
             style = MiuixTheme.textStyles.body2,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -553,7 +558,7 @@ private fun PromptPatchRow(
         enabled = editingEnabled,
     ) {
         Text(
-            "${patch.agentId()} · ${patch.fileName()}",
+            patchTargetLabel(patch.targetType(), patch.agentId(), patch.fileName()),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -589,11 +594,21 @@ private fun PromptPatchEditDialog(
                     onCheckedChange = { onEditorChange(current.copy(draft = current.draft.copy(enabled = it))) },
                     checkboxLocation = CheckboxLocation.End,
                 )
+                OverlayDropdownPreference(
+                    items = PromptTargetType.entries.map(::targetTypeLabel),
+                    selectedIndex = PromptTargetType.entries.indexOf(current.draft.targetType),
+                    title = "Prompt 目标类型",
+                    summary = targetTypeSummary(current.draft.targetType),
+                    onSelectedIndexChange = { selected ->
+                        val type = PromptTargetType.entries[selected]
+                        onEditorChange(current.copy(draft = current.draft.withTargetType(type)))
+                    },
+                )
                 TextField(
                     value = current.draft.agentId,
                     onValueChange = { onEditorChange(current.copy(draft = current.draft.copy(agentId = it))) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = "Agent ID（* 表示全部）",
+                    label = targetIdLabel(current.draft.targetType),
                     singleLine = true,
                 )
                 Spacer(Modifier.height(8.dp))
@@ -601,7 +616,7 @@ private fun PromptPatchEditDialog(
                     value = current.draft.fileName,
                     onValueChange = { onEditorChange(current.copy(draft = current.draft.copy(fileName = it))) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = "Prompt 文件名",
+                    label = targetPartLabel(current.draft.targetType),
                     singleLine = true,
                 )
                 Spacer(Modifier.height(8.dp))
@@ -639,3 +654,59 @@ private fun PromptPatchEditDialog(
         }
     }
 }
+
+private fun PromptPatchDraft.withTargetType(type: PromptTargetType): PromptPatchDraft {
+    return when (type) {
+        PromptTargetType.AGENT_PROMPT -> copy(
+            targetType = type,
+            agentId = "*",
+            fileName = "tool_selection_rules.md",
+        )
+        PromptTargetType.TOOL_PROMPT -> copy(
+            targetType = type,
+            agentId = "cli",
+            fileName = "description",
+        )
+        PromptTargetType.MEMORY_PROMPT -> copy(
+            targetType = type,
+            agentId = "memorygate/prompt_query_gate.txt",
+            fileName = "systemPrompt",
+        )
+    }
+}
+
+private fun targetTypeLabel(type: PromptTargetType): String = when (type) {
+    PromptTargetType.AGENT_PROMPT -> "Agent Prompt"
+    PromptTargetType.TOOL_PROMPT -> "工具 Prompt"
+    PromptTargetType.MEMORY_PROMPT -> "记忆 Prompt"
+}
+
+private fun targetTypeSummary(type: PromptTargetType): String = when (type) {
+    PromptTargetType.AGENT_PROMPT -> "Agent ID 与 Prompt 文件"
+    PromptTargetType.TOOL_PROMPT -> "工具名与 [[section]]"
+    PromptTargetType.MEMORY_PROMPT -> "记忆模板 key 与 systemPrompt/userPrompt"
+}
+
+private fun targetIdLabel(type: PromptTargetType): String = when (type) {
+    PromptTargetType.AGENT_PROMPT -> "Agent ID（* 表示全部）"
+    PromptTargetType.TOOL_PROMPT -> "工具名"
+    PromptTargetType.MEMORY_PROMPT -> "记忆 Prompt key"
+}
+
+private fun targetPartLabel(type: PromptTargetType): String = when (type) {
+    PromptTargetType.AGENT_PROMPT -> "Prompt 文件名"
+    PromptTargetType.TOOL_PROMPT -> "工具 Prompt section"
+    PromptTargetType.MEMORY_PROMPT -> "记忆 Prompt section"
+}
+
+private fun patchTargetLabel(
+    type: PromptTargetType,
+    targetId: String,
+    targetPart: String,
+): String = "${targetTypeLabel(type)} · $targetId · $targetPart"
+
+private fun previewTargetLabel(document: PromptPreviewDocument): String = patchTargetLabel(
+    document.targetType(),
+    document.agentId(),
+    document.fileName(),
+)

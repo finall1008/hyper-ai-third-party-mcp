@@ -73,6 +73,19 @@ for MARKER in \
 done
 
 for MARKER in \
+    'loadFromAssets' \
+    'loadSplit' \
+    'prompts/tools/' \
+    'prompts/clawmemory/' \
+    '===== systemPrompt ====='; do
+    if rg -F -q "$MARKER" "$DEX_STRINGS_FILE"; then
+        echo "Found auxiliary Prompt patch marker: $MARKER"
+    else
+        echo "Auxiliary Prompt patch marker not found: $MARKER; tool or memory Prompt patching may degrade independently." >&2
+    fi
+done
+
+for MARKER in \
     'getFirstVisibleOutputTimeoutMs$runtime' \
     'LLM first-visible-output timeout after '; do
     if rg -F -q "$MARKER" "$DEX_STRINGS_FILE"; then

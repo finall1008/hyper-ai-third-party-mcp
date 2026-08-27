@@ -39,6 +39,7 @@ import io.github.finall1008.xiaoaimcp.prompt.PromptPatchCodec;
 import io.github.finall1008.xiaoaimcp.prompt.PromptPatchConfig;
 import io.github.finall1008.xiaoaimcp.prompt.PromptPatchEngine;
 import io.github.finall1008.xiaoaimcp.prompt.PromptPatchResult;
+import io.github.finall1008.xiaoaimcp.prompt.PromptTargetType;
 import io.github.finall1008.xiaoaimcp.timeout.FirstOutputTimeoutConfig;
 import io.github.finall1008.xiaoaimcp.timeout.FirstOutputTimeoutRepository;
 import io.github.libxposed.api.XposedInterface;
@@ -179,6 +180,8 @@ public final class XiaoAiMcpModule extends XposedModule {
         FilePolicyHookTargets knownFileTargets = FilePolicyHookResolver.resolveKnown(
                 hostClassLoader);
         PromptHookTargets knownPromptTargets = PromptHookResolver.resolveKnown(hostClassLoader);
+        AuxiliaryPromptHookTargets knownAuxiliaryPromptTargets =
+                AuxiliaryPromptHookResolver.resolveKnown(hostClassLoader);
         DexDiscoveryHints dexHints = DexDiscoveryHints.empty();
         AgentTraceTargets knownAgentTraceTargets = agentTraceEnabled
                 ? AgentTraceTargetResolver.resolveKnown(hostClassLoader)
@@ -188,6 +191,7 @@ public final class XiaoAiMcpModule extends XposedModule {
                         ? FirstOutputTimeoutTargetResolver.resolveKnown(hostClassLoader)
                         : null;
         if (knownMcpTargets == null || knownFileTargets == null || knownPromptTargets == null
+                || !knownAuxiliaryPromptTargets.hasAllCapabilities()
                 || (agentTraceEnabled && !knownAgentTraceTargets.hasAllCapabilities())
                 || (firstOutputTimeoutConfig.overridesHost()
                         && knownFirstOutputTimeoutTargets == null)) {
@@ -233,6 +237,22 @@ public final class XiaoAiMcpModule extends XposedModule {
         } catch (Throwable error) {
             log(Log.WARN, TAG,
                     "System Prompt patch targets unavailable; other capabilities remain active",
+                    error);
+        }
+        boolean auxiliaryPromptInstalled = false;
+        String auxiliaryPromptResolver = "unavailable";
+        try {
+            AuxiliaryPromptHookTargets auxiliaryTargets =
+                    knownAuxiliaryPromptTargets.hasAllCapabilities()
+                            ? knownAuxiliaryPromptTargets
+                            : AuxiliaryPromptHookResolver.resolve(
+                                    hostClassLoader, catalog, dexHints);
+            auxiliaryPromptInstalled = installAuxiliaryPromptHooks(auxiliaryTargets);
+            auxiliaryPromptResolver = auxiliaryPromptInstalled
+                    ? auxiliaryTargets.mode() : "unavailable";
+        } catch (Throwable error) {
+            log(Log.WARN, TAG,
+                    "Tool/Memory Prompt patch targets unavailable; Agent Prompt remains independent",
                     error);
         }
         boolean agentTraceInstalled = false;
@@ -286,7 +306,7 @@ public final class XiaoAiMcpModule extends XposedModule {
             log(Log.INFO, TAG,
                     "First-output timeout follows host default; no timeout Hook installed");
         }
-        if (mcpInstalled || promptInstalled) {
+        if (mcpInstalled || promptInstalled || auxiliaryPromptInstalled) {
             try {
                 installPreferenceListener();
             } catch (Throwable error) {
@@ -296,6 +316,7 @@ public final class XiaoAiMcpModule extends XposedModule {
             }
         }
         if (!mcpInstalled && !filePolicyInstalled && !agentTraceInstalled && !promptInstalled
+                && !auxiliaryPromptInstalled
                 && !firstOutputTimeoutInstalled) {
             throw new IllegalStateException("No compatible module capability found");
         }
@@ -303,6 +324,7 @@ public final class XiaoAiMcpModule extends XposedModule {
                 + mcpResolver + ", filePolicy=" + filePolicyInstalled
                 + ", agentTrace=" + agentTraceResolver
                 + ", promptPatch=" + promptResolver
+                + ", auxiliaryPromptPatch=" + auxiliaryPromptResolver
                 + ", firstOutputTimeout=" + firstOutputTimeoutResolver);
     }
 
@@ -399,6 +421,107 @@ public final class XiaoAiMcpModule extends XposedModule {
             promptCacheInvalidatorMethod = null;
             log(Log.ERROR, TAG, "System Prompt patch hook unavailable", error);
             return false;
+        }
+    }
+
+    private boolean installAuxiliaryPromptHooks(AuxiliaryPromptHookTargets targets) {
+        boolean toolInstalled = false;
+        boolean memoryInstalled = false;
+        if (targets.toolPromptLoader() != null) {
+            try {
+                tryDeoptimize(targets.toolPromptLoader());
+                hook(targets.toolPromptLoader())
+                        .setId("xiaoai-tool-prompt-patch")
+                        .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Object original = chain.proceed();
+                            Object rawToolName = chain.getArg(1);
+                            if (!(rawToolName instanceof String toolName)) {
+                                return original;
+                            }
+                            return patchPromptSections(
+                                    original, PromptTargetType.TOOL_PROMPT, toolName);
+                        });
+                toolInstalled = true;
+            } catch (Throwable error) {
+                log(Log.WARN, TAG,
+                        "Tool Prompt patch Hook unavailable; tool descriptions remain unchanged",
+                        error);
+            }
+        }
+        if (targets.memoryPromptLoader() != null) {
+            try {
+                tryDeoptimize(targets.memoryPromptLoader());
+                hook(targets.memoryPromptLoader())
+                        .setId("xiaoai-memory-prompt-patch")
+                        .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                        .intercept(chain -> {
+                            Object original = chain.proceed();
+                            Object rawPromptKey = chain.getArg(0);
+                            if (!(rawPromptKey instanceof String promptKey)) {
+                                return original;
+                            }
+                            return patchPromptSections(
+                                    original, PromptTargetType.MEMORY_PROMPT, promptKey);
+                        });
+                memoryInstalled = true;
+            } catch (Throwable error) {
+                log(Log.WARN, TAG,
+                        "Memory Prompt patch Hook unavailable; MemoryGate remains unchanged",
+                        error);
+            }
+        }
+        log(Log.INFO, TAG, "Auxiliary Prompt patch capability: resolver=" + targets.mode()
+                + ", tool=" + toolInstalled + ", memory=" + memoryInstalled);
+        return toolInstalled || memoryInstalled;
+    }
+
+    private Object patchPromptSections(
+            Object original,
+            PromptTargetType targetType,
+            String targetId
+    ) {
+        if (!(original instanceof Map<?, ?> originalMap)) {
+            return original;
+        }
+        PromptPatchConfig config = loadPromptPatchConfig();
+        if (config == null) {
+            return original;
+        }
+        Map<Object, Object> patchedMap = null;
+        for (Map.Entry<?, ?> entry : originalMap.entrySet()) {
+            if (!(entry.getKey() instanceof String section)
+                    || !(entry.getValue() instanceof String prompt)) {
+                continue;
+            }
+            PromptPatchResult result = PromptPatchEngine.apply(
+                    prompt, targetType, targetId, section, config);
+            logPromptPatchResult(targetType, targetId, section, result);
+            if (!result.appliedPatchIds().isEmpty()) {
+                if (patchedMap == null) {
+                    patchedMap = new LinkedHashMap<>(originalMap);
+                }
+                patchedMap.put(entry.getKey(), result.text());
+            }
+        }
+        return patchedMap == null ? original : patchedMap;
+    }
+
+    private void logPromptPatchResult(
+            PromptTargetType targetType,
+            String targetId,
+            String targetPart,
+            PromptPatchResult result
+    ) {
+        if (!result.appliedPatchIds().isEmpty()) {
+            log(Log.INFO, TAG, "Applied Prompt patches: type=" + targetType.serializedName()
+                    + ", target=" + redactAgentId(targetId) + ", part=" + targetPart
+                    + ", ids=" + result.appliedPatchIds());
+        }
+        for (PromptPatchResult.SkippedPatch skipped : result.skippedPatches()) {
+            log(Log.WARN, TAG, "Skipped Prompt patch: type=" + targetType.serializedName()
+                    + ", target=" + redactAgentId(targetId) + ", part=" + targetPart
+                    + ", id=" + skipped.id() + ", occurrences=" + skipped.occurrences());
         }
     }
 

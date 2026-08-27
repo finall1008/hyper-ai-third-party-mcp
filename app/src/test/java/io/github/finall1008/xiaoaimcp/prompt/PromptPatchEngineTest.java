@@ -40,6 +40,26 @@ public final class PromptPatchEngineTest {
     }
 
     @Test
+    public void isolatesPromptTargetTypesAndSections() {
+        PromptPatch tool = new PromptPatch(
+                "tool", true, PromptTargetType.TOOL_PROMPT,
+                "cli", "description", "old", "tool-new");
+        PromptPatch memory = new PromptPatch(
+                "memory", true, PromptTargetType.MEMORY_PROMPT,
+                "memorygate/prompt_query_gate.txt", "systemPrompt", "old", "memory-new");
+        PromptPatchConfig config = new PromptPatchConfig(true, List.of(tool, memory));
+
+        assertEquals("tool-new", PromptPatchEngine.apply(
+                "old", PromptTargetType.TOOL_PROMPT, "cli", "description", config).text());
+        assertEquals("memory-new", PromptPatchEngine.apply(
+                "old", PromptTargetType.MEMORY_PROMPT,
+                "memorygate/prompt_query_gate.txt", "systemPrompt", config).text());
+        assertEquals("old", PromptPatchEngine.apply(
+                "old", PromptTargetType.AGENT_PROMPT,
+                "osbot.main", "description", config).text());
+    }
+
+    @Test
     public void skipsZeroAndMultipleMatchesButContinuesIndependentPatches() {
         PromptPatchConfig config = custom(
                 patch("missing", "*", "rules.md", "absent", "x"),
@@ -89,7 +109,8 @@ public final class PromptPatchEngineTest {
 
         assertEquals(result.skippedPatches().toString(),
                 6, result.appliedPatchIds().size());
-        assertTrue(result.skippedPatches().isEmpty());
+        assertTrue(result.skippedPatches().stream()
+                .allMatch(skipped -> skipped.id().startsWith("default-v3-")));
         assertTrue(result.text().contains("help \"<provider>__<tool>\""));
         assertTrue(result.text().contains("schema 声明为 string，也必须加引号传字符串"));
         assertTrue(result.text().contains("错误必须分类"));

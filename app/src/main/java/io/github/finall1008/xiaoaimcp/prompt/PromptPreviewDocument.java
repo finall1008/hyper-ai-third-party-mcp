@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Objects;
 
 public record PromptPreviewDocument(
+        PromptTargetType targetType,
         String agentId,
         String fileName,
         String originalText,
@@ -13,6 +14,7 @@ public record PromptPreviewDocument(
         String error
 ) {
     public PromptPreviewDocument {
+        targetType = Objects.requireNonNull(targetType, "targetType");
         agentId = Objects.requireNonNull(agentId, "agentId");
         fileName = Objects.requireNonNull(fileName, "fileName");
         appliedPatchIds = List.copyOf(appliedPatchIds);
@@ -20,12 +22,14 @@ public record PromptPreviewDocument(
     }
 
     public static PromptPreviewDocument available(
+            PromptTargetType targetType,
             String agentId,
             String fileName,
             String originalText,
             PromptPatchResult result
     ) {
         return new PromptPreviewDocument(
+                targetType,
                 agentId,
                 fileName,
                 Objects.requireNonNull(originalText, "originalText"),
@@ -37,11 +41,13 @@ public record PromptPreviewDocument(
     }
 
     public static PromptPreviewDocument unavailable(
+            PromptTargetType targetType,
             String agentId,
             String fileName,
             String error
     ) {
         return new PromptPreviewDocument(
+                targetType,
                 agentId,
                 fileName,
                 null,

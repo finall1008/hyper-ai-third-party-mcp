@@ -84,6 +84,29 @@ public final class InstalledPromptPreviewLoaderTest {
         assertTrue(document.appliedPatchIds().isEmpty());
     }
 
+    @Test
+    public void previewsToolAndMemoryPromptSections() {
+        FakeAssets assets = new FakeAssets()
+                .put(PromptTargetType.TOOL_PROMPT, "cli", "description", "tool old")
+                .put(PromptTargetType.MEMORY_PROMPT,
+                        "memorygate/prompt_query_gate.txt", "systemPrompt", "memory old");
+        PromptPatch tool = new PromptPatch(
+                "tool", true, PromptTargetType.TOOL_PROMPT,
+                "cli", "description", "old", "new");
+        PromptPatch memory = new PromptPatch(
+                "memory", true, PromptTargetType.MEMORY_PROMPT,
+                "memorygate/prompt_query_gate.txt", "systemPrompt", "old", "new");
+
+        List<PromptPreviewDocument> documents = new InstalledPromptPreviewLoader(assets)
+                .load(new PromptPatchConfig(true, List.of(tool, memory)));
+
+        assertEquals(2, documents.size());
+        assertEquals(PromptTargetType.TOOL_PROMPT, documents.get(0).targetType());
+        assertEquals("tool new", documents.get(0).patchedText());
+        assertEquals(PromptTargetType.MEMORY_PROMPT, documents.get(1).targetType());
+        assertEquals("memory new", documents.get(1).patchedText());
+    }
+
     private static PromptPatchConfig config(PromptPatch... patches) {
         return new PromptPatchConfig(true, List.of(patches));
     }
@@ -103,21 +126,35 @@ public final class InstalledPromptPreviewLoaderTest {
         private final Map<String, String> prompts = new LinkedHashMap<>();
 
         FakeAssets put(String agentId, String fileName, String text) {
-            prompts.put(agentId + '\0' + fileName, text);
+            return put(PromptTargetType.AGENT_PROMPT, agentId, fileName, text);
+        }
+
+        FakeAssets put(
+                PromptTargetType targetType,
+                String targetId,
+                String targetPart,
+                String text
+        ) {
+            prompts.put(targetType.name() + '\0' + targetId + '\0' + targetPart, text);
             return this;
         }
 
         @Override
         public List<String> listAgentIds() {
             return prompts.keySet().stream()
-                    .map(key -> key.substring(0, key.indexOf('\0')))
+                    .filter(key -> key.startsWith(PromptTargetType.AGENT_PROMPT.name() + '\0'))
+                    .map(key -> key.split("\\u0000", -1)[1])
                     .distinct()
                     .toList();
         }
 
         @Override
-        public String readPrompt(String agentId, String fileName) throws IOException {
-            return prompts.get(agentId + '\0' + fileName);
+        public String readPrompt(
+                PromptTargetType targetType,
+                String targetId,
+                String targetPart
+        ) throws IOException {
+            return prompts.get(targetType.name() + '\0' + targetId + '\0' + targetPart);
         }
     }
 }
