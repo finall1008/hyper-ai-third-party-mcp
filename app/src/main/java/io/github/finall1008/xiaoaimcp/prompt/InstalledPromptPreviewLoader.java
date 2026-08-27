@@ -42,8 +42,14 @@ public final class InstalledPromptPreviewLoader {
             if (!patch.enabled()) {
                 continue;
             }
+            if (patch.targetType() != PromptTargetType.AGENT_PROMPT) {
+                targets.putIfAbsent(new Target(
+                        patch.targetType(), patch.agentId(), patch.fileName()), null);
+                continue;
+            }
             if (!patch.agentId().equals("*")) {
-                targets.putIfAbsent(new Target(patch.agentId(), patch.fileName()), null);
+                targets.putIfAbsent(new Target(
+                        patch.targetType(), patch.agentId(), patch.fileName()), null);
                 continue;
             }
             if (installedAgents == null) {
@@ -51,9 +57,11 @@ public final class InstalledPromptPreviewLoader {
             }
             boolean matched = false;
             for (String agentId : installedAgents) {
-                Target target = new Target(agentId, patch.fileName());
+                Target target = new Target(
+                        PromptTargetType.AGENT_PROMPT, agentId, patch.fileName());
                 try {
-                    String original = assets.readPrompt(target.agentId(), target.fileName());
+                    String original = assets.readPrompt(
+                            target.targetType(), target.agentId(), target.fileName());
                     if (original == null) {
                         continue;
                     }
@@ -66,7 +74,8 @@ public final class InstalledPromptPreviewLoader {
                 }
             }
             if (!matched) {
-                Target wildcard = new Target("*", patch.fileName());
+                Target wildcard = new Target(
+                        PromptTargetType.AGENT_PROMPT, "*", patch.fileName());
                 targets.putIfAbsent(wildcard,
                         "已安装的超级小爱中没有 Agent 包含该 Prompt 文件");
             }
@@ -77,14 +86,16 @@ public final class InstalledPromptPreviewLoader {
             Target target = entry.getKey();
             if (entry.getValue() != null) {
                 result.add(PromptPreviewDocument.unavailable(
-                        target.agentId(), target.fileName(), entry.getValue()));
+                        target.targetType(), target.agentId(), target.fileName(), entry.getValue()));
                 continue;
             }
             try {
                 String original = originals.containsKey(target)
-                        ? originals.get(target) : assets.readPrompt(target.agentId(), target.fileName());
+                        ? originals.get(target) : assets.readPrompt(
+                                target.targetType(), target.agentId(), target.fileName());
                 if (original == null) {
                     result.add(PromptPreviewDocument.unavailable(
+                            target.targetType(),
                             target.agentId(),
                             target.fileName(),
                             "当前安装的超级小爱 APK 中不存在该 Prompt 文件"
@@ -92,12 +103,13 @@ public final class InstalledPromptPreviewLoader {
                     continue;
                 }
                 PromptPatchResult patched = PromptPatchEngine.apply(
-                        original, target.agentId(), target.fileName(), config);
+                        original, target.targetType(), target.agentId(),
+                        target.fileName(), config);
                 result.add(PromptPreviewDocument.available(
-                        target.agentId(), target.fileName(), original, patched));
+                        target.targetType(), target.agentId(), target.fileName(), original, patched));
             } catch (IOException error) {
                 result.add(PromptPreviewDocument.unavailable(
-                        target.agentId(), target.fileName(), safeMessage(error)));
+                        target.targetType(), target.agentId(), target.fileName(), safeMessage(error)));
             }
         }
         return List.copyOf(result);
@@ -122,7 +134,11 @@ public final class InstalledPromptPreviewLoader {
     interface PromptAssetSource {
         List<String> listAgentIds() throws IOException;
 
-        String readPrompt(String agentId, String fileName) throws IOException;
+        String readPrompt(
+                PromptTargetType targetType,
+                String targetId,
+                String targetPart
+        ) throws IOException;
     }
 
     private static final class PackagePromptAssetSource implements PromptAssetSource {
@@ -142,8 +158,16 @@ public final class InstalledPromptPreviewLoader {
         }
 
         @Override
-        public String readPrompt(String agentId, String fileName) throws IOException {
-            String path = "agents/" + agentId + "/" + fileName;
+        public String readPrompt(
+                PromptTargetType targetType,
+                String targetId,
+                String targetPart
+        ) throws IOException {
+            String path = switch (targetType) {
+                case AGENT_PROMPT -> "agents/" + targetId + "/" + targetPart;
+                case TOOL_PROMPT -> "prompts/tools/" + targetId + ".txt";
+                case MEMORY_PROMPT -> "prompts/clawmemory/" + targetId;
+            };
             try (InputStream input = targetAssets().open(path, AssetManager.ACCESS_STREAMING)) {
                 ByteArrayOutputStream output = new ByteArrayOutputStream();
                 byte[] buffer = new byte[8192];
@@ -156,10 +180,45 @@ public final class InstalledPromptPreviewLoader {
                     }
                     output.write(buffer, 0, read);
                 }
-                return new String(output.toByteArray(), StandardCharsets.UTF_8);
+                String raw = new String(output.toByteArray(), StandardCharsets.UTF_8);
+                return switch (targetType) {
+                    case AGENT_PROMPT -> raw;
+                    case TOOL_PROMPT -> readToolSection(raw, targetPart);
+                    case MEMORY_PROMPT -> readMemorySection(raw, targetPart);
+                };
             } catch (FileNotFoundException error) {
                 return null;
             }
+        }
+
+        private static String readToolSection(String raw, String section) throws IOException {
+            String marker = "[[" + section + "]]";
+            int start = raw.indexOf(marker);
+            if (start < 0) {
+                return null;
+            }
+            start += marker.length();
+            if (start < raw.length() && raw.charAt(start) == '\r') {
+                start++;
+            }
+            if (start < raw.length() && raw.charAt(start) == '\n') {
+                start++;
+            }
+            int end = raw.indexOf("\n[[", start);
+            String value = end < 0 ? raw.substring(start) : raw.substring(start, end);
+            return value.trim();
+        }
+
+        private static String readMemorySection(String raw, String section) throws IOException {
+            String startMarker = "===== " + section + " =====";
+            int start = raw.indexOf(startMarker);
+            if (start < 0) {
+                return null;
+            }
+            start += startMarker.length();
+            int end = raw.indexOf("===== ", start);
+            String value = end < 0 ? raw.substring(start) : raw.substring(start, end);
+            return value.trim();
         }
 
         private synchronized AssetManager targetAssets() throws IOException {
@@ -178,6 +237,10 @@ public final class InstalledPromptPreviewLoader {
         }
     }
 
-    private record Target(String agentId, String fileName) {
+    private record Target(
+            PromptTargetType targetType,
+            String agentId,
+            String fileName
+    ) {
     }
 }

@@ -36,8 +36,9 @@ public final class PromptPatchCodec {
                 JSONObject item = new JSONObject();
                 item.put("id", patch.id());
                 item.put("enabled", patch.enabled());
-                item.put("agent_id", patch.agentId());
-                item.put("file_name", patch.fileName());
+                item.put("target_type", patch.targetType().serializedName());
+                item.put("target_id", patch.agentId());
+                item.put("target_part", patch.fileName());
                 item.put("find", patch.findText());
                 item.put("replacement", patch.replacementText());
                 patches.put(item);
@@ -63,7 +64,8 @@ public final class PromptPatchCodec {
         try {
             JSONObject root = new JSONObject(json);
             int version = root.optInt("version", -1);
-            if (version != 1 && version != BridgeContract.PROMPT_PATCH_SCHEMA_VERSION) {
+            if (version != 1 && version != 2
+                    && version != BridgeContract.PROMPT_PATCH_SCHEMA_VERSION) {
                 throw new IllegalArgumentException("Unsupported prompt patch version: " + version);
             }
             JSONArray array = root.optJSONArray("patches");
@@ -74,15 +76,11 @@ public final class PromptPatchCodec {
             if (array != null) {
                 for (int index = 0; index < array.length(); index++) {
                     JSONObject item = array.getJSONObject(index);
-                    patches.add(new PromptPatch(
-                            item.getString("id"),
-                            item.optBoolean("enabled", true),
-                            item.getString("agent_id"),
-                            item.getString("file_name"),
-                            item.getString("find"),
-                            item.optString("replacement", "")
-                    ));
+                    patches.add(parsePatch(item, version));
                 }
+            }
+            if (version == 2) {
+                appendNewVersionThreeDefaults(patches);
             }
             PromptPatchConfig config = new PromptPatchConfig(
                     root.optBoolean("enabled", true),
@@ -110,21 +108,100 @@ public final class PromptPatchCodec {
 
     public static void validatePatch(PromptPatch patch) {
         requireText(patch.id(), "Patch ID", MAX_SELECTOR_LENGTH);
-        requireText(patch.agentId(), "Agent ID", MAX_SELECTOR_LENGTH);
-        requireText(patch.fileName(), "Prompt file name", MAX_SELECTOR_LENGTH);
+        requireText(patch.agentId(), targetIdLabel(patch.targetType()), MAX_SELECTOR_LENGTH);
+        requireText(patch.fileName(), targetPartLabel(patch.targetType()), MAX_SELECTOR_LENGTH);
         requireText(patch.findText(), "Find text", MAX_FIND_LENGTH);
         if (patch.replacementText().length() > MAX_REPLACEMENT_LENGTH) {
             throw new IllegalArgumentException("Replacement text is too long");
         }
-        if (!patch.agentId().equals("*") && containsPathSeparator(patch.agentId())) {
-            throw new IllegalArgumentException("Agent ID must be an exact ID or *");
+        if (patch.targetType() != PromptTargetType.AGENT_PROMPT
+                && patch.agentId().equals("*")) {
+            throw new IllegalArgumentException(targetIdLabel(patch.targetType())
+                    + " must be an exact ID");
+        }
+        if (patch.targetType() == PromptTargetType.MEMORY_PROMPT
+                ? containsUnsafeRelativePath(patch.agentId())
+                : containsUnsafeSelector(patch.agentId())) {
+            throw new IllegalArgumentException(targetIdLabel(patch.targetType())
+                    + " must be an exact ID or *");
         }
         if (containsPathSeparator(patch.fileName())
                 || patch.fileName().equals(".")
                 || patch.fileName().equals("..")
                 || patch.fileName().indexOf('\0') >= 0) {
-            throw new IllegalArgumentException("Prompt file name must be a basename");
+            throw new IllegalArgumentException(targetPartLabel(patch.targetType())
+                    + " must be a basename");
         }
+        if (patch.targetType() == PromptTargetType.MEMORY_PROMPT
+                && !(patch.agentId().endsWith(".md") || patch.agentId().endsWith(".txt"))) {
+            throw new IllegalArgumentException("Memory Prompt key must include .md or .txt");
+        }
+        if (patch.targetType() == PromptTargetType.MEMORY_PROMPT
+                && !(patch.fileName().equals("systemPrompt")
+                || patch.fileName().equals("userPrompt"))) {
+            throw new IllegalArgumentException(
+                    "Memory Prompt section must be systemPrompt or userPrompt");
+        }
+    }
+
+    private static PromptPatch parsePatch(JSONObject item, int version) throws JSONException {
+        PromptTargetType targetType = version >= 3
+                ? PromptTargetType.parse(item.getString("target_type"))
+                : PromptTargetType.AGENT_PROMPT;
+        return new PromptPatch(
+                item.getString("id"),
+                item.optBoolean("enabled", true),
+                targetType,
+                item.getString(version >= 3 ? "target_id" : "agent_id"),
+                item.getString(version >= 3 ? "target_part" : "file_name"),
+                item.getString("find"),
+                item.optString("replacement", "")
+        );
+    }
+
+    private static void appendNewVersionThreeDefaults(List<PromptPatch> patches) {
+        Set<String> existingIds = new HashSet<>();
+        for (PromptPatch patch : patches) {
+            existingIds.add(patch.id());
+        }
+        for (PromptPatch patch : DefaultPromptPatches.load()) {
+            if (patch.id().startsWith("default-v3-") && existingIds.add(patch.id())) {
+                patches.add(patch);
+            }
+        }
+    }
+
+    private static String targetIdLabel(PromptTargetType targetType) {
+        return switch (targetType) {
+            case AGENT_PROMPT -> "Agent ID";
+            case TOOL_PROMPT -> "Tool name";
+            case MEMORY_PROMPT -> "Memory Prompt key";
+        };
+    }
+
+    private static String targetPartLabel(PromptTargetType targetType) {
+        return switch (targetType) {
+            case AGENT_PROMPT -> "Prompt file name";
+            case TOOL_PROMPT, MEMORY_PROMPT -> "Prompt section";
+        };
+    }
+
+    private static boolean containsUnsafeSelector(String value) {
+        return !value.equals("*") && (containsPathSeparator(value)
+                || value.equals(".") || value.equals("..") || value.indexOf('\0') >= 0);
+    }
+
+    private static boolean containsUnsafeRelativePath(String value) {
+        if (value.indexOf('\0') >= 0 || value.indexOf('\\') >= 0
+                || value.startsWith("/") || value.endsWith("/")) {
+            return true;
+        }
+        for (String segment : value.split("/")) {
+            if (segment.isBlank() || segment.equals(".") || segment.equals("..")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void requireText(String value, String label, int maxLength) {

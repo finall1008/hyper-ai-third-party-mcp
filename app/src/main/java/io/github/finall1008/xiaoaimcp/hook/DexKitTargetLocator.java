@@ -47,7 +47,10 @@ final class DexKitTargetLocator {
     private static final List<String> PROMPT_STRING_ANCHORS = List.of(
             "tool_selection_rules.md",
             "custom_prompt.md",
-            "complex_task_prompt.md"
+            "complex_task_prompt.md",
+            "prompts/tools/",
+            "prompts/clawmemory/",
+            "===== systemPrompt ====="
     );
     private static final String FIRST_OUTPUT_TIMEOUT_ANCHOR =
             "LLM first-visible-output timeout after ";

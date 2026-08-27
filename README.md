@@ -46,23 +46,28 @@ Magisk 等 root 管理器中授权，拒绝授权或命令执行失败时模块�
 
 ### System Prompt 补丁
 
-模块 App 的“System Prompt 补丁”会在超级小爱读取 Prompt 文件时执行内存中的精确文本替换，
+模块 App 的“System Prompt 补丁”会在超级小爱读取 Agent Prompt、工具说明和记忆模板时执行内存中的精确文本替换，
 不会覆盖或写入超级小爱的私有 Prompt 文件。首次使用时会从仓库中的
 `app/src/main/resources/prompt/default_prompt_patches.json` 加载并启用一组普通规则：
 
 - MCP provider help 后，调用具体工具前继续查看该工具的 help 和最新 schema；
 - `help → call`、`lookup → action` 等存在数据依赖的步骤串行执行；
 - 完整遵守 JSON Schema，包括把 schema 声明为 string 的经纬度传为 JSON 字符串；
-- 区分参数、权限、网络、临时服务等错误，不因两次失败就断言能力永久不可用。
+- 参数化或写入型 CLI 命令先查看准确的子命令 help，Commands 摘要不再充当完整用法；
+- 区分参数、权限、网络、临时服务等错误，并检查内层业务状态和预期产物；
+- 本轮明确要求和已召回的明确长期偏好可以覆盖工具路由等默认策略，安全、权限和能力边界不变；
+- 多种工具路径可能受长期偏好影响时，MemoryGate 会检索完整记忆，而非只使用大纲。
 
 默认规则没有独立开关，会直接显示在规则列表中，可与后来添加的规则一样逐条编辑、停用或删除。
-规则可指定精确 Agent ID 或 `*`、Prompt 文件名、查找原文及替换内容。查找原文必须恰好出现一次；
+规则目标可选择 Agent Prompt、工具 Prompt 或记忆 Prompt，并指定相应的目标 ID、section/文件名、查找原文及替换内容。Agent ID 支持 `*`；
+查找原文必须恰好出现一次；
 零匹配或多匹配会跳过该条规则并写入不含正文的诊断日志。所有规则按列表顺序执行，替换内容留空可删除原文。
-页面直接读取当前已安装超级小爱 APK 中的 `assets/agents/<agent-id>/<file-name>` 并用同一个补丁引擎本地模拟。无需启动超级小爱或新建会话；
-若规则涉及多个 Agent/Prompt 文件，预览会先列出全部目标。完整文件中未修改行正常显示，删除行原位标红，新增行原位标绿。配置保存后模块会尝试清除宿主 Prompt 内存缓存，通常从下一次新会话生效；
-若目标版本无法定位缓存刷新接口，需重启超级小爱。
+页面直接读取当前已安装超级小爱 APK 中的 `assets/agents/`、`assets/prompts/tools/` 和
+`assets/prompts/clawmemory/` 对应内容，并用同一个补丁引擎本地模拟。无需启动超级小爱或新建会话；
+若规则涉及多个目标，预览会先列出全部目标。完整内容中未修改行正常显示，删除行原位标红，新增行原位标绿。
+保存后请重启超级小爱，避免已缓存的工具说明或会话头继续使用旧内容。
 
-该功能只处理宿主通过通用 Prompt 文件解析器加载的文本，不声称覆盖所有运行时硬编码或动态生成的 system context。
+该功能不修改 DirectPath 快捷执行、运行时硬编码规则或动态生成的其他 system context。
 
 ### 模型首次输出超时
 
@@ -114,7 +119,7 @@ Magisk 等 root 管理器中授权，拒绝授权或命令执行失败时模块�
 
 - 配置存储在 Xposed 框架的 Remote Preferences 中；目标进程只能读取。
 - 配置只在宿主读取时内存合并，不会写入超级小爱的私有 `mcp_servers.json`。
-- Prompt 补丁只修改宿主读取结果，不会写入 `prompt.md`、`tool_selection_rules.md` 或其他宿主 Prompt 文件。
+- Prompt 补丁只修改宿主读取结果，不会写入 Agent、工具或记忆 Prompt 资产。
 - Request headers 可用于 Bearer/API Key。界面默认遮挡 header 值，模块日志只记录 header 数量。
 - Root 和 Xposed 框架本身仍然能够访问这些凭据；不要把 Remote Preferences 当作硬件级密钥存储。
 - 文件扩权不会额外绕过 Android/Linux 权限、Scoped Storage 或文件系统挂载限制；用户规则允许但宿主进程本身无法访问的路径仍会由系统拒绝。
@@ -127,7 +132,7 @@ Magisk 等 root 管理器中授权，拒绝授权或命令执行失败时模块�
 adb logcat | rg 'XiaoAiMcpBridge|PersonalMcpManager|McpClient'
 ```
 
-预期可看到 Hook 安装、服务器数量、reload 完成、Agent Trace 能力解析以及宿主 MCP
+预期可看到 Hook 安装、服务器数量、reload 完成、三类 Prompt 补丁能力、Agent Trace 能力解析以及宿主 MCP
 连接/发现日志；启用首次输出超时覆盖时也会记录解析方式和脱敏后的超时值。日志不会出现
 请求头值或 Agent 工具输入输出正文。
 

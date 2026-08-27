@@ -38,7 +38,7 @@ public final class DefaultPromptPatches {
                         + RESOURCE_NAME);
             }
             JSONObject root = new JSONObject(readUtf8(input));
-            if (root.optInt("version", -1) != 1) {
+            if (root.optInt("version", -1) != 2) {
                 throw new IllegalArgumentException("Unsupported default prompt patch version");
             }
             JSONArray array = root.getJSONArray("patches");
@@ -48,8 +48,9 @@ public final class DefaultPromptPatches {
                 PromptPatch patch = new PromptPatch(
                         item.getString("id"),
                         item.optBoolean("enabled", true),
-                        item.getString("agent_id"),
-                        item.getString("file_name"),
+                        PromptTargetType.parse(item.getString("target_type")),
+                        item.getString("target_id"),
+                        item.getString("target_part"),
                         item.getString("find"),
                         item.optString("replacement", "")
                 );

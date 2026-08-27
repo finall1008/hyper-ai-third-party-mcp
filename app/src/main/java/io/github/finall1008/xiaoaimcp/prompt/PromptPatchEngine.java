@@ -13,20 +13,32 @@ public final class PromptPatchEngine {
             String fileName,
             PromptPatchConfig config
     ) {
+        return apply(original, PromptTargetType.AGENT_PROMPT, agentId, fileName, config);
+    }
+
+    public static PromptPatchResult apply(
+            String original,
+            PromptTargetType targetType,
+            String targetId,
+            String targetPart,
+            PromptPatchConfig config
+    ) {
         if (original == null || !config.enabled()) {
             return new PromptPatchResult(original, List.of(), List.of());
         }
         String current = original;
         List<String> applied = new ArrayList<>();
         List<PromptPatchResult.SkippedPatch> skipped = new ArrayList<>();
-        current = applyAll(current, agentId, fileName, config.patches(), applied, skipped);
+        current = applyAll(current, targetType, targetId, targetPart,
+                config.patches(), applied, skipped);
         return new PromptPatchResult(current, applied, skipped);
     }
 
     private static String applyAll(
             String input,
-            String agentId,
-            String fileName,
+            PromptTargetType targetType,
+            String targetId,
+            String targetPart,
             List<PromptPatch> patches,
             List<String> applied,
             List<PromptPatchResult.SkippedPatch> skipped
@@ -34,8 +46,9 @@ public final class PromptPatchEngine {
         String current = input;
         for (PromptPatch patch : patches) {
             if (!patch.enabled()
-                    || !patch.fileName().equals(fileName)
-                    || !(patch.agentId().equals("*") || patch.agentId().equals(agentId))) {
+                    || patch.targetType() != targetType
+                    || !patch.fileName().equals(targetPart)
+                    || !(patch.agentId().equals("*") || patch.agentId().equals(targetId))) {
                 continue;
             }
             int occurrences = countOccurrences(current, patch.findText());

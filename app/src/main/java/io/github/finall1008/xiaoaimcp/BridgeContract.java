@@ -21,7 +21,7 @@ public final class BridgeContract {
     public static final String PREF_PROMPT_PATCH_JSON = "prompt_patch_json";
     public static final boolean DEFAULT_AGENT_TRACE_ENABLED = true;
     public static final int FILE_POLICY_SCHEMA_VERSION = 2;
-    public static final int PROMPT_PATCH_SCHEMA_VERSION = 2;
+    public static final int PROMPT_PATCH_SCHEMA_VERSION = 3;
 
     private BridgeContract() {
     }
