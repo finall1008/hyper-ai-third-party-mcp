@@ -91,7 +91,7 @@ class MainActivityTest {
 
     @Test
     fun exposesVersionLabelAndOfficialReleasePage() {
-        assertEquals("当前版本 1.4.0", aboutVersionLabel("1.4.0"))
+        assertEquals("当前版本 1.5.0", aboutVersionLabel("1.5.0"))
         assertEquals(
             "https://github.com/finall1008/hyper-ai-third-party-mcp/releases",
             GITHUB_RELEASES_URL,
