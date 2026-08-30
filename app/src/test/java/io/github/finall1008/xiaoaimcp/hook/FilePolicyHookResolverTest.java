@@ -71,6 +71,18 @@ public final class FilePolicyHookResolverTest {
     }
 
     @Test
+    public void resolvesExpandedConsentSignaturesFromXiaoAi823() throws Exception {
+        FilePolicyHookTargets targets = resolve(
+                ExpandedRiskManager.class,
+                RelocatedRiskContext.class,
+                RelocatedMovePair.class
+        );
+
+        assertTrue(targets.hasConfirmationPolicy());
+        assertEquals("expandedFileExemption", targets.riskFileExemption().getName());
+    }
+
+    @Test
     public void mergesDexKitCandidatesWithIndependentStructuralFallbacks() throws Exception {
         String mutationClass = RelocatedUriResolver.class.getName();
         DexDiscoveryHints hints = new DexDiscoveryHints(
@@ -241,5 +253,40 @@ public final class FilePolicyHookResolverTest {
                                                String message) {
             return false;
         }
+    }
+
+    public static final class ExpandedRiskManager {
+        public Object checkToolRisk(String name, Object schema, Object arguments,
+                                    RelocatedRiskContext context, TestContinuation continuation) {
+            return null;
+        }
+
+        public Object checkCliCommand(String command, List<String> arguments,
+                                      RelocatedRiskContext context,
+                                      TestContinuation continuation) {
+            return null;
+        }
+
+        public Object confirmByCategory$runtime(String category, String title,
+                                                RelocatedRiskContext context, String details,
+                                                TestContinuation continuation) {
+            return null;
+        }
+
+        public Object requestConsent$runtime(String title, Object mode, String category,
+                                             RelocatedRiskContext context, String details,
+                                             TestContinuation continuation) {
+            return null;
+        }
+
+        public boolean expandedFileExemption(List<String> paths,
+                                             RelocatedRiskContext context,
+                                             RelocatedMovePair move,
+                                             String message) {
+            return false;
+        }
+    }
+
+    public interface TestContinuation {
     }
 }

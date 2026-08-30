@@ -25,4 +25,14 @@ public final class TargetVersionPolicyTest {
         assertFalse(TargetVersionPolicy.isSupported("8beta"));
         assertFalse(TargetVersionPolicy.isSupported(".8"));
     }
+
+    @Test
+    public void detectsNativeMcpFromTheVerifiedHostRelease() {
+        assertFalse(TargetVersionPolicy.hasNativeMcp("8.0.30.4121"));
+        assertFalse(TargetVersionPolicy.hasNativeMcp("8.2.3.1618"));
+        assertTrue(TargetVersionPolicy.hasNativeMcp("8.2.3.1619"));
+        assertTrue(TargetVersionPolicy.hasNativeMcp("8.2.4"));
+        assertTrue(TargetVersionPolicy.hasNativeMcp("9.0"));
+        assertFalse(TargetVersionPolicy.hasNativeMcp("8.2.x"));
+    }
 }

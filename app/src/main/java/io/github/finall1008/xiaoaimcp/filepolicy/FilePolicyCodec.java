@@ -25,9 +25,14 @@ public final class FilePolicyCodec {
             root.put("version", BridgeContract.FILE_POLICY_SCHEMA_VERSION);
             root.put("enabled", config.enabled());
             JSONArray rules = new JSONArray();
+            Set<String> paths = new HashSet<>();
             for (FileAccessRule rule : config.rules()) {
+                String path = normalizeConfiguredPath(rule.path());
+                if (!paths.add(path)) {
+                    throw new IllegalArgumentException("Duplicate file policy path: " + path);
+                }
                 JSONObject item = new JSONObject();
-                item.put("path", normalizeConfiguredPath(rule.path()));
+                item.put("path", path);
                 item.put("allow_mutation", rule.allowMutation());
                 item.put("allow_lockscreen_read", rule.allowLockscreenRead());
                 item.put("allow_lockscreen_mutation", rule.allowLockscreenMutation());
@@ -87,7 +92,10 @@ public final class FilePolicyCodec {
         if (rawPath == null) {
             throw new IllegalArgumentException("Path is required");
         }
-        String path = rawPath.trim().replace('\\', '/');
+        if (rawPath.indexOf('\\') >= 0 || rawPath.indexOf('\0') >= 0) {
+            throw new IllegalArgumentException("Unsafe path: " + rawPath);
+        }
+        String path = rawPath.trim();
         while (path.contains("//")) {
             path = path.replace("//", "/");
         }
@@ -102,9 +110,15 @@ public final class FilePolicyCodec {
                     "Only /sdcard or /storage/emulated/0 paths are supported");
         }
         for (String segment : path.split("/")) {
-            if (segment.equals(".") || segment.equals("..") || segment.indexOf('\0') >= 0) {
+            if (segment.equals(".") || segment.equals("..")) {
                 throw new IllegalArgumentException("Unsafe path: " + rawPath);
             }
+        }
+        if (path.equals("/storage/emulated/0")) {
+            return "/sdcard";
+        }
+        if (path.startsWith("/storage/emulated/0/")) {
+            return "/sdcard" + path.substring("/storage/emulated/0".length());
         }
         return path;
     }

@@ -7,10 +7,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Set;
 
 public final class McpConfigCodec {
     private McpConfigCodec() {
@@ -57,58 +54,16 @@ public final class McpConfigCodec {
         return servers;
     }
 
-    public static String mergeHostConfig(String hostJson, String moduleJson)
+    /** Converts the retired module format into XiaoAi's native personal MCP format. */
+    public static String exportNativeConfig(List<McpServer> servers)
             throws JSONException, McpConfigValidator.ValidationException {
-        List<McpServer> moduleServers = parseModuleConfig(moduleJson);
-        if (moduleServers.isEmpty()) {
-            return hostJson;
-        }
-
-        JSONObject host = new JSONObject(hostJson);
-        Set<String> moduleNames = new HashSet<>();
-        for (McpServer server : moduleServers) {
-            moduleNames.add(server.name());
-        }
-
-        JSONArray merged = new JSONArray();
-        JSONArray hostServers = host.optJSONArray("servers");
-        if (hostServers != null) {
-            for (int i = 0; i < hostServers.length(); i++) {
-                JSONObject server = hostServers.getJSONObject(i);
-                if (!moduleNames.contains(server.optString("name"))) {
-                    merged.put(server);
-                }
-            }
-        }
-
-        JSONObject legacy = host.optJSONObject("mcpServers");
-        if (legacy != null) {
-            Iterator<String> keys = legacy.keys();
-            List<String> toRemove = new ArrayList<>();
-            while (keys.hasNext()) {
-                String key = keys.next();
-                if (moduleNames.contains(key)) {
-                    toRemove.add(key);
-                }
-            }
-            for (String key : toRemove) {
-                legacy.remove(key);
-            }
-        }
-
-        for (McpServer server : moduleServers) {
-            merged.put(server.toHostJson());
-        }
-        host.put("servers", merged);
-        return host.toString();
-    }
-
-    public static String redactedForLog(List<McpServer> servers) {
-        List<String> summaries = new ArrayList<>(servers.size());
+        McpConfigValidator.validateAll(servers);
+        JSONObject root = new JSONObject();
+        JSONArray nativeServers = new JSONArray();
         for (McpServer server : servers) {
-            summaries.add(server.name() + "(" + server.transport() + ", headers="
-                    + server.headers().size() + ", enabled=" + server.enabled() + ")");
+            nativeServers.put(server.toHostJson());
         }
-        return summaries.toString();
+        root.put("servers", nativeServers);
+        return root.toString(2);
     }
 }

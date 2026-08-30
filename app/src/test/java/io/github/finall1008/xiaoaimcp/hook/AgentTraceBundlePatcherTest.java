@@ -1,12 +1,19 @@
 package io.github.finall1008.xiaoaimcp.hook;
 
 import org.junit.Test;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
+
+import java.io.File;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 public final class AgentTraceBundlePatcherTest {
+    @Rule
+    public final TemporaryFolder temporaryFolder = new TemporaryFolder();
+
     @Test
     public void semanticToolCallModuleIsPatchedAndPatchIsIdempotent() {
         String source = "var boot=1;__d(function(){"
@@ -76,5 +83,33 @@ public final class AgentTraceBundlePatcherTest {
         assertNotNull(patched);
         assertTrue(patched.contains("hiddenMarkdown:{width:'100%',opacity:1,overflow:'visible'}"));
         assertTrue(patched.contains("markdownText:S,textStyle:h.textStyle||{},numberOfLines:999999"));
+    }
+
+    @Test
+    public void cachePruningKeepsCurrentAndNewestKnownBundles() throws Exception {
+        File root = temporaryFolder.newFolder("cache");
+        File oldest = cacheDirectory(root, 'a', 1L);
+        File middle = cacheDirectory(root, 'b', 2L);
+        File current = cacheDirectory(root, 'c', 3L);
+        File newest = cacheDirectory(root, 'd', 4L);
+        File unrelated = new File(root, "do-not-delete");
+        assertTrue(unrelated.mkdir());
+
+        AgentTraceBundlePatcher.pruneCache(root, current, 3);
+
+        assertFalse(oldest.exists());
+        assertTrue(middle.exists());
+        assertTrue(current.exists());
+        assertTrue(newest.exists());
+        assertTrue(unrelated.exists());
+    }
+
+    private static File cacheDirectory(File root, char name, long modified) throws Exception {
+        File directory = new File(root, String.valueOf(name).repeat(64));
+        assertTrue(directory.mkdir());
+        File bundle = new File(directory, "stream.bundle");
+        assertTrue(bundle.createNewFile());
+        assertTrue(directory.setLastModified(modified));
+        return directory;
     }
 }

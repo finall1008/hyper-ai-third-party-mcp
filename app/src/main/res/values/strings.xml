@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">超级小爱增强</string>
-    <string name="app_description">增强超级小爱的 MCP、Agent、Prompt 与文件能力</string>
+    <string name="app_description">增强超级小爱的 Agent、Prompt、超时与文件能力</string>
 </resources>

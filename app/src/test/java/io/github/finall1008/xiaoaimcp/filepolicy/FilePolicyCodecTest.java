@@ -39,6 +39,8 @@ public final class FilePolicyCodecTest {
                 () -> FilePolicyCodec.normalizeConfiguredPath("/data/local/tmp"));
         assertThrows(IllegalArgumentException.class,
                 () -> FilePolicyCodec.normalizeConfiguredPath("/sdcard/Download/../DCIM"));
+        assertThrows(IllegalArgumentException.class,
+                () -> FilePolicyCodec.normalizeConfiguredPath("/sdcard\\Download"));
     }
 
     @Test
@@ -48,6 +50,24 @@ public final class FilePolicyCodecTest {
                 + "{\"path\":\"/sdcard/Download/\"}]}";
 
         assertThrows(IllegalArgumentException.class, () -> FilePolicyCodec.parse(json));
+    }
+
+    @Test
+    public void canonicalizesSdcardAliasesAndRejectsAliasDuplicates() {
+        assertEquals("/sdcard/Download", FilePolicyCodec.normalizeConfiguredPath(
+                "/storage/emulated/0/Download"));
+        String json = "{\"version\":2,\"enabled\":true,\"rules\":["
+                + "{\"path\":\"/sdcard/Download\"},"
+                + "{\"path\":\"/storage/emulated/0/Download\"}]}";
+
+        assertThrows(IllegalArgumentException.class, () -> FilePolicyCodec.parse(json));
+        assertThrows(IllegalArgumentException.class, () -> FilePolicyCodec.encode(
+                new FilePolicyConfig(true, List.of(
+                        new FileAccessRule("/sdcard/Download", false,
+                                false, false, false, false),
+                        new FileAccessRule("/storage/emulated/0/Download", true,
+                                true, true, true, true)
+                ))));
     }
 
     @Test

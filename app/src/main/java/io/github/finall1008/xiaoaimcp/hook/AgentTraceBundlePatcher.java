@@ -9,7 +9,11 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -20,6 +24,7 @@ import java.util.regex.Pattern;
 final class AgentTraceBundlePatcher {
     private static final String PATCH_MARKER = "xiaoai-agent-trace-v10";
     private static final String BUNDLE_END_MARKER = "__reactNativeBundleEndSuccess__";
+    private static final int MAX_CACHED_BUNDLES = 3;
 
     private static final String HELPERS = """
             /* xiaoai-agent-trace-v10 */
@@ -48,13 +53,15 @@ final class AgentTraceBundlePatcher {
             sourceBytes = read(source);
         }
         String sourceHash = sha256(sourceBytes);
-        File outputDirectory = new File(
-                context.getCodeCacheDir(), "xiaoai-agent-trace/" + sourceHash
-        );
+        File cacheRoot = new File(context.getCodeCacheDir(), "xiaoai-agent-trace");
+        File outputDirectory = new File(cacheRoot, sourceHash);
         File output = new File(outputDirectory, "stream.bundle");
         if (output.isFile()) {
             String cached = new String(read(output), StandardCharsets.UTF_8);
             if (cached.contains(PATCH_MARKER) && cached.contains(BUNDLE_END_MARKER)) {
+                //noinspection ResultOfMethodCallIgnored
+                outputDirectory.setLastModified(System.currentTimeMillis());
+                pruneCache(cacheRoot, outputDirectory, MAX_CACHED_BUNDLES);
                 return output.getAbsolutePath();
             }
             // A partial file must not be used as a script.
@@ -80,7 +87,72 @@ final class AgentTraceBundlePatcher {
             temporary.delete();
             throw new IOException("Unable to atomically publish Agent Trace bundle");
         }
+        //noinspection ResultOfMethodCallIgnored
+        outputDirectory.setLastModified(System.currentTimeMillis());
+        pruneCache(cacheRoot, outputDirectory, MAX_CACHED_BUNDLES);
         return output.getAbsolutePath();
+    }
+
+    static void pruneCache(File cacheRoot, File currentDirectory, int maxDirectories) {
+        if (cacheRoot == null || currentDirectory == null || maxDirectories < 1) {
+            return;
+        }
+        File[] children = cacheRoot.listFiles();
+        if (children == null || children.length <= maxDirectories) {
+            return;
+        }
+        List<File> candidates = new ArrayList<>();
+        for (File child : children) {
+            if (child.isDirectory()
+                    && !Files.isSymbolicLink(child.toPath())
+                    && isHashDirectory(child.getName())) {
+                candidates.add(child);
+            }
+        }
+        candidates.sort(Comparator.comparingLong(File::lastModified).reversed());
+        int retainedOthers = 0;
+        for (File candidate : candidates) {
+            if (sameFile(candidate, currentDirectory)) {
+                continue;
+            }
+            if (retainedOthers < maxDirectories - 1) {
+                retainedOthers++;
+                continue;
+            }
+            deleteCacheDirectory(candidate);
+        }
+    }
+
+    private static boolean isHashDirectory(String name) {
+        return name != null && name.matches("[0-9a-f]{64}");
+    }
+
+    private static boolean sameFile(File first, File second) {
+        try {
+            return first.getCanonicalFile().equals(second.getCanonicalFile());
+        } catch (IOException ignored) {
+            return first.getAbsoluteFile().equals(second.getAbsoluteFile());
+        }
+    }
+
+    private static void deleteCacheDirectory(File directory) {
+        File[] files = directory.listFiles();
+        if (files == null) {
+            return;
+        }
+        for (File file : files) {
+            if (file.isDirectory()
+                    || !(file.getName().equals("stream.bundle")
+                    || file.getName().equals("stream.bundle.tmp"))) {
+                return;
+            }
+        }
+        for (File file : files) {
+            //noinspection ResultOfMethodCallIgnored
+            file.delete();
+        }
+        //noinspection ResultOfMethodCallIgnored
+        directory.delete();
     }
 
     static String patchSource(String source) {

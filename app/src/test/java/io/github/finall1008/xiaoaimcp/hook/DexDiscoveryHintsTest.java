@@ -13,14 +13,12 @@ public final class DexDiscoveryHintsTest {
     public void snapshotsAndDeduplicatesCandidateNames() {
         DexDiscoveryHints hints = new DexDiscoveryHints(
                 List.of("host.Manager", "host.Manager", "host.Policy"),
-                Set.of("host.Manager"),
                 Set.of("host.Trace"),
                 3,
                 12L
         );
 
         assertEquals(List.of("host.Manager", "host.Policy"), hints.classNames());
-        assertEquals(Set.of("host.Manager"), hints.mcpManagerClassNames());
         assertEquals(Set.of("host.Trace"), hints.agentTraceClassNames());
         assertEquals(3, hints.matchedMethods());
         assertEquals(12L, hints.elapsedMillis());

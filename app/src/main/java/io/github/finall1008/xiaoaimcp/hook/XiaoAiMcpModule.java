@@ -9,28 +9,20 @@ import android.content.pm.PackageManager;
 import android.util.Log;
 
 import java.io.File;
-import java.lang.ref.WeakReference;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 import io.github.finall1008.xiaoaimcp.BridgeContract;
 import io.github.finall1008.xiaoaimcp.TargetVersionPolicy;
-import io.github.finall1008.xiaoaimcp.config.McpConfigCodec;
-import io.github.finall1008.xiaoaimcp.config.McpServer;
 import io.github.finall1008.xiaoaimcp.filepolicy.FilePolicyCodec;
 import io.github.finall1008.xiaoaimcp.filepolicy.FilePolicyConfig;
 import io.github.finall1008.xiaoaimcp.filepolicy.LockscreenFileAccessEvaluator;
@@ -48,22 +40,14 @@ import io.github.libxposed.api.XposedModuleInterface;
 
 public final class XiaoAiMcpModule extends XposedModule {
     private static final String TAG = "XiaoAiMcpBridge";
+    private static final int MAX_INITIALIZATION_IDENTITIES = 256;
 
-    private final AtomicReference<WeakReference<Object>> managerReference =
-            new AtomicReference<>(new WeakReference<>(null));
-    private final AtomicBoolean reloadInFlight = new AtomicBoolean(false);
-    private final AtomicBoolean reloadPending = new AtomicBoolean(false);
     private final AtomicBoolean initializationStarted = new AtomicBoolean(false);
     private final AtomicBoolean invalidFilePolicyLogged = new AtomicBoolean(false);
     private final AtomicBoolean invalidPromptPatchLogged = new AtomicBoolean(false);
     private final AtomicBoolean agentTraceBundleFallbackLogged = new AtomicBoolean(false);
     private final ThreadLocal<ArrayDeque<String>> fileAgentContext =
             ThreadLocal.withInitial(ArrayDeque::new);
-    private final ExecutorService reloadExecutor = Executors.newSingleThreadExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "xiaoai-mcp-reload");
-        thread.setDaemon(true);
-        return thread;
-    });
     private final AgentToolTraceStore agentToolTraceStore = new AgentToolTraceStore();
     private final ThreadLocal<Boolean> initializationReasoningPending = new ThreadLocal<>();
     private final Set<Object> initializationReasoningObjects =
@@ -74,13 +58,6 @@ public final class XiaoAiMcpModule extends XposedModule {
     private volatile SharedPreferences remotePreferences;
     private volatile boolean targetProcess;
     private volatile XposedInterface.HookHandle bootstrapHook;
-    private volatile Method reloadMethod;
-    private volatile Constructor<?> hostServerConfigConstructor;
-    private volatile Constructor<?> hostServersConfigConstructor;
-    private volatile Method hostConfigGetAllServers;
-    private volatile Method hostConfigGetGatewayMode;
-    private volatile Method hostServerGetName;
-    private volatile CoroutineAdapter coroutineAdapter;
     private volatile SharedPreferences.OnSharedPreferenceChangeListener preferenceListener;
     private volatile Object promptCacheInvalidator;
     private volatile Method promptCacheInvalidatorMethod;
@@ -176,7 +153,6 @@ public final class XiaoAiMcpModule extends XposedModule {
         boolean agentTraceEnabled = isAgentTraceEnabled();
         FirstOutputTimeoutConfig firstOutputTimeoutConfig = loadFirstOutputTimeoutConfig();
 
-        ResolvedHookTargets knownMcpTargets = HookTargetResolver.resolveKnown(hostClassLoader);
         FilePolicyHookTargets knownFileTargets = FilePolicyHookResolver.resolveKnown(
                 hostClassLoader);
         PromptHookTargets knownPromptTargets = PromptHookResolver.resolveKnown(hostClassLoader);
@@ -190,7 +166,7 @@ public final class XiaoAiMcpModule extends XposedModule {
                 firstOutputTimeoutConfig.overridesHost()
                         ? FirstOutputTimeoutTargetResolver.resolveKnown(hostClassLoader)
                         : null;
-        if (knownMcpTargets == null || knownFileTargets == null || knownPromptTargets == null
+        if (knownFileTargets == null || knownPromptTargets == null
                 || !knownAuxiliaryPromptTargets.hasAllCapabilities()
                 || (agentTraceEnabled && !knownAgentTraceTargets.hasAllCapabilities())
                 || (firstOutputTimeoutConfig.overridesHost()
@@ -198,7 +174,6 @@ public final class XiaoAiMcpModule extends XposedModule {
             try {
                 dexHints = DexKitTargetLocator.discover(hostClassLoader);
                 log(Log.INFO, TAG, "DexKit discovery: classes=" + dexHints.classNames().size()
-                        + ", managerHints=" + dexHints.mcpManagerClassNames().size()
                         + ", agentTraceHints=" + dexHints.agentTraceClassNames().size()
                         + ", promptHints=" + dexHints.promptClassNames().size()
                         + ", methods=" + dexHints.matchedMethods()
@@ -210,20 +185,6 @@ public final class XiaoAiMcpModule extends XposedModule {
             }
         }
 
-        boolean mcpInstalled = false;
-        String mcpResolver = "unavailable";
-        try {
-            ResolvedHookTargets targets = knownMcpTargets != null
-                    ? knownMcpTargets
-                    : HookTargetResolver.resolve(hostClassLoader, catalog, dexHints);
-            installHooks(targets);
-            mcpInstalled = true;
-            mcpResolver = targets.mode();
-        } catch (Throwable error) {
-            log(Log.WARN, TAG,
-                    "MCP targets unavailable; independently resolved file-policy hooks remain eligible",
-                    error);
-        }
         boolean filePolicyInstalled = installFilePolicyHooks(
                 hostClassLoader, catalog, knownFileTargets, dexHints);
         boolean promptInstalled = false;
@@ -306,22 +267,22 @@ public final class XiaoAiMcpModule extends XposedModule {
             log(Log.INFO, TAG,
                     "First-output timeout follows host default; no timeout Hook installed");
         }
-        if (mcpInstalled || promptInstalled || auxiliaryPromptInstalled) {
+        if (promptInstalled || auxiliaryPromptInstalled) {
             try {
-                installPreferenceListener();
+                installPromptPreferenceListener();
             } catch (Throwable error) {
                 log(Log.ERROR, TAG,
                         "Preference listener unavailable; configuration applies next startup",
                         error);
             }
         }
-        if (!mcpInstalled && !filePolicyInstalled && !agentTraceInstalled && !promptInstalled
+        if (!filePolicyInstalled && !agentTraceInstalled && !promptInstalled
                 && !auxiliaryPromptInstalled
                 && !firstOutputTimeoutInstalled) {
             throw new IllegalStateException("No compatible module capability found");
         }
-        log(Log.INFO, TAG, "XiaoAi " + versionName + " accepted (minimum 8.0); mcp="
-                + mcpResolver + ", filePolicy=" + filePolicyInstalled
+        log(Log.INFO, TAG, "XiaoAi " + versionName + " accepted (minimum 8.0); filePolicy="
+                + filePolicyInstalled
                 + ", agentTrace=" + agentTraceResolver
                 + ", promptPatch=" + promptResolver
                 + ", auxiliaryPromptPatch=" + auxiliaryPromptResolver
@@ -598,9 +559,10 @@ public final class XiaoAiMcpModule extends XposedModule {
                             try {
                                 Object result = chain.proceed();
                                 if (initialization && chain.getThisObject() != null) {
-                                    synchronized (initializationReasoningObjects) {
-                                        initializationReasoningObjects.add(chain.getThisObject());
-                                    }
+                                    addBoundedIdentity(
+                                            initializationReasoningObjects,
+                                            chain.getThisObject()
+                                    );
                                 }
                                 return result;
                             } finally {
@@ -623,9 +585,7 @@ public final class XiaoAiMcpModule extends XposedModule {
                             Object source = chain.getArg(0);
                             Object result = chain.proceed();
                             if (isInitializationObject(source) && result != null) {
-                                synchronized (initializationReasoningEnvelopes) {
-                                    initializationReasoningEnvelopes.add(result);
-                                }
+                                addBoundedIdentity(initializationReasoningEnvelopes, result);
                             }
                             return result;
                         });
@@ -734,6 +694,18 @@ public final class XiaoAiMcpModule extends XposedModule {
         }
     }
 
+    private static void addBoundedIdentity(Set<Object> identities, Object value) {
+        if (value == null) {
+            return;
+        }
+        synchronized (identities) {
+            if (identities.size() >= MAX_INITIALIZATION_IDENTITIES) {
+                identities.clear();
+            }
+            identities.add(value);
+        }
+    }
+
     private boolean isInitializationEnvelope(Object value) {
         if (value == null) {
             return false;
@@ -833,35 +805,6 @@ public final class XiaoAiMcpModule extends XposedModule {
         }
     }
 
-    private void installHooks(ResolvedHookTargets targets) throws Exception {
-        ObjectConfigAdapter adapter = targets.objectAdapter();
-        if (adapter != null) {
-            hostServerConfigConstructor = adapter.serverConstructor();
-            hostServersConfigConstructor = adapter.serversConstructor();
-            hostConfigGetAllServers = adapter.getAllServers();
-            hostConfigGetGatewayMode = adapter.getGatewayMode();
-            hostServerGetName = adapter.getServerName();
-        }
-
-        boolean syncDeoptimized = tryDeoptimize(targets.syncMethod());
-        boolean reloadDeoptimized = tryDeoptimize(targets.reloadMethod());
-        boolean catalogDeoptimized = tryDeoptimize(targets.loadCatalogMethod());
-        log(Log.INFO, TAG, "Targeted deoptimization: sync=" + syncDeoptimized
-                + ", reload=" + reloadDeoptimized + ", catalog=" + catalogDeoptimized);
-
-        boolean textInstalled = installTextHook(targets.textConfigMethod());
-        boolean objectInstalled = installObjectHook(
-                targets.hasObjectConfig() ? targets.objectConfigMethod() : null);
-        if (!textInstalled && !objectInstalled) {
-            throw new IllegalStateException("No MCP config reader hook could be installed");
-        }
-
-        boolean reloadInstalled = prepareReload(targets)
-                && installManagerCaptureHook(targets.syncMethod());
-        log(Log.INFO, TAG, "Hook capabilities: text=" + textInstalled
-                + ", object=" + objectInstalled + ", liveReload=" + reloadInstalled);
-    }
-
     private boolean installFilePolicyHooks(
             ClassLoader classLoader,
             ClassCatalog catalog,
@@ -875,7 +818,7 @@ public final class XiaoAiMcpModule extends XposedModule {
                     : FilePolicyHookResolver.resolve(classLoader, catalog, dexHints);
         } catch (Throwable error) {
             log(Log.WARN, TAG,
-                    "File-policy targets unavailable; MCP hooks remain active and host file policy is unchanged",
+                    "File-policy targets unavailable; other capabilities remain active and host file policy is unchanged",
                     error);
             return false;
         }
@@ -1177,82 +1120,6 @@ public final class XiaoAiMcpModule extends XposedModule {
                 + (PathPolicyEvaluator.isBackgroundAgent(agentId) ? "::bg/..." : "::...");
     }
 
-    private boolean installTextHook(Method method) {
-        if (method == null) {
-            return false;
-        }
-        try {
-            hook(method)
-                    .setId("xiaoai-mcp-config-merge")
-                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
-                    .intercept(chain -> {
-                        Object original = chain.proceed();
-                        if (!(original instanceof String hostConfig)) {
-                            return original;
-                        }
-                        return mergeConfiguredServers(hostConfig);
-                    });
-            return true;
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Text config hook unavailable", error);
-            return false;
-        }
-    }
-
-    private boolean installObjectHook(Method method) {
-        if (method == null) {
-            return false;
-        }
-        try {
-            hook(method)
-                    .setId("xiaoai-mcp-config-object-merge")
-                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
-                    .intercept(chain -> mergeConfiguredServerObjects(chain.proceed()));
-            return true;
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Object config hook unavailable", error);
-            return false;
-        }
-    }
-
-    private boolean prepareReload(ResolvedHookTargets targets) {
-        if (targets.syncMethod() == null || targets.reloadMethod() == null) {
-            return false;
-        }
-        try {
-            coroutineAdapter = CoroutineAdapter.create(targets.continuationClass());
-            reloadMethod = targets.reloadMethod();
-            return true;
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Live reload coroutine adapter unavailable", error);
-            return false;
-        }
-    }
-
-    private boolean installManagerCaptureHook(Method method) {
-        try {
-            hook(method)
-                    .setId("xiaoai-mcp-manager-capture")
-                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
-                    .intercept(chain -> {
-                        Object manager = chain.getThisObject();
-                        if (manager != null) {
-                            managerReference.set(new WeakReference<>(manager));
-                        }
-                        Object result = chain.proceed();
-                        if (reloadPending.get()) {
-                            requestReload();
-                        }
-                        return result;
-                    });
-            return true;
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Live reload manager capture unavailable", error);
-            reloadMethod = null;
-            return false;
-        }
-    }
-
     private boolean tryDeoptimize(Method method) {
         if (method == null) {
             return false;
@@ -1265,122 +1132,12 @@ public final class XiaoAiMcpModule extends XposedModule {
         }
     }
 
-    private String mergeConfiguredServers(String hostConfig) {
-        SharedPreferences preferences = remotePreferences;
-        if (preferences == null) {
-            return hostConfig;
-        }
-        String moduleConfig = preferences.getString(
-                BridgeContract.PREF_SERVERS_JSON,
-                McpConfigCodec.emptyConfig()
-        );
-        try {
-            List<McpServer> servers = McpConfigCodec.parseModuleConfig(moduleConfig);
-            if (servers.isEmpty()) {
-                return hostConfig;
-            }
-            String merged = McpConfigCodec.mergeHostConfig(hostConfig, moduleConfig);
-            log(Log.INFO, TAG, "Merged " + servers.size() + " configured server(s): "
-                    + McpConfigCodec.redactedForLog(servers));
-            return merged;
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Ignoring invalid module MCP configuration", error);
-            return hostConfig;
-        }
-    }
-
-    private Object mergeConfiguredServerObjects(Object hostConfig) {
-        SharedPreferences preferences = remotePreferences;
-        Constructor<?> serverConstructor = hostServerConfigConstructor;
-        Constructor<?> serversConstructor = hostServersConfigConstructor;
-        Method getAllServers = hostConfigGetAllServers;
-        Method getGatewayMode = hostConfigGetGatewayMode;
-        Method getServerName = hostServerGetName;
-        if (hostConfig == null
-                || preferences == null
-                || serverConstructor == null
-                || serversConstructor == null
-                || getAllServers == null
-                || getGatewayMode == null
-                || getServerName == null) {
-            return hostConfig;
-        }
-
-        String moduleConfig = preferences.getString(
-                BridgeContract.PREF_SERVERS_JSON,
-                McpConfigCodec.emptyConfig()
-        );
-        try {
-            List<McpServer> moduleServers = McpConfigCodec.parseModuleConfig(moduleConfig);
-            if (moduleServers.isEmpty()) {
-                return hostConfig;
-            }
-
-            Set<String> moduleNames = new HashSet<>();
-            for (McpServer server : moduleServers) {
-                moduleNames.add(server.name());
-            }
-
-            Object originalListValue = getAllServers.invoke(hostConfig);
-            if (!(originalListValue instanceof List<?> originalServers)) {
-                throw new IllegalStateException("Host getAllServers did not return List");
-            }
-            List<Object> mergedServers = new ArrayList<>();
-            for (Object originalServer : originalServers) {
-                Object name = getServerName.invoke(originalServer);
-                if (!(name instanceof String) || !moduleNames.contains(name)) {
-                    mergedServers.add(originalServer);
-                }
-            }
-
-            for (McpServer server : moduleServers) {
-                Object hostServer = serverConstructor.newInstance(
-                        server.name(),
-                        server.url(),
-                        null,
-                        "",
-                        "",
-                        Collections.emptyList(),
-                        Collections.emptyMap(),
-                        server.description(),
-                        server.enabled(),
-                        server.headers(),
-                        null,
-                        30,
-                        true,
-                        false,
-                        Collections.emptyList(),
-                        server.transport(),
-                        ""
-                );
-                mergedServers.add(hostServer);
-            }
-
-            boolean gatewayMode = (boolean) getGatewayMode.invoke(hostConfig);
-            Object mergedConfig = serversConstructor.newInstance(
-                    mergedServers,
-                    Collections.emptyMap(),
-                    gatewayMode
-            );
-            log(Log.INFO, TAG, "Merged " + moduleServers.size()
-                    + " configured server object(s): "
-                    + McpConfigCodec.redactedForLog(moduleServers));
-            return mergedConfig;
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Ignoring invalid module MCP object configuration", error);
-            return hostConfig;
-        }
-    }
-
-    private void installPreferenceListener() {
+    private void installPromptPreferenceListener() {
         SharedPreferences preferences = remotePreferences;
         if (preferences == null) {
             throw new IllegalStateException("Remote Preferences unavailable");
         }
         SharedPreferences.OnSharedPreferenceChangeListener listener = (prefs, key) -> {
-            if (key == null || BridgeContract.PREF_SERVERS_JSON.equals(key)) {
-                requestReload();
-            }
             if (key == null || BridgeContract.PREF_PROMPT_PATCH_JSON.equals(key)) {
                 invalidatePromptMemoryCache();
             }
@@ -1407,58 +1164,4 @@ public final class XiaoAiMcpModule extends XposedModule {
         }
     }
 
-    private void requestReload() {
-        reloadPending.set(true);
-        if (reloadInFlight.compareAndSet(false, true)) {
-            reloadExecutor.execute(this::startPendingReload);
-        }
-    }
-
-    private void startPendingReload() {
-        if (!reloadPending.getAndSet(false)) {
-            finishReload();
-            return;
-        }
-        Object manager = managerReference.get().get();
-        Method method = reloadMethod;
-        CoroutineAdapter adapter = coroutineAdapter;
-        if (manager == null || method == null || adapter == null) {
-            log(Log.INFO, TAG, "Configuration changed before MCP manager initialization; "
-                    + "it will be applied on next XiaoAi startup");
-            finishReload();
-            return;
-        }
-
-        AtomicBoolean completionDelivered = new AtomicBoolean(false);
-        Runnable completion = () -> {
-            if (completionDelivered.compareAndSet(false, true)) {
-                log(Log.INFO, TAG, "Personal MCP reload completed");
-                finishReload();
-            }
-        };
-
-        try {
-            Object continuation = adapter.newContinuation(completion);
-            Object result = getInvoker(method)
-                    .setType(XposedInterface.Invoker.Type.Chain.FULL)
-                    .invoke(manager, continuation);
-            if (!CoroutineAdapter.isSuspended(result)) {
-                completion.run();
-            }
-        } catch (Throwable error) {
-            log(Log.ERROR, TAG, "Personal MCP reload failed", error);
-            completion.run();
-        }
-    }
-
-    private void finishReload() {
-        if (reloadPending.get()) {
-            reloadExecutor.execute(this::startPendingReload);
-            return;
-        }
-        reloadInFlight.set(false);
-        if (reloadPending.get() && reloadInFlight.compareAndSet(false, true)) {
-            reloadExecutor.execute(this::startPendingReload);
-        }
-    }
 }

@@ -17,10 +17,6 @@
         android:theme="@style/AppTheme">
 
         <activity
-            android:name=".ui.ServerEditActivity"
-            android:exported="false" />
-
-        <activity
             android:name=".ui.FirstOutputTimeoutActivity"
             android:exported="false" />
 
