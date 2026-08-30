@@ -145,7 +145,7 @@ final class AgentTraceTargetResolver {
         Method reasoningMapper = findReasoningMapper(candidateNames);
         Method toolCallBuilder = uniqueMethod(candidateNames, this::toolBuilder);
         Method toastStreamBuilder = uniqueMethod(candidateNames, this::toastStreamBuilder);
-        Method bundleLoader = uniqueMethod(candidateNames, this::bundleLoader);
+        Method bundleLoader = findBundleLoader(candidateNames);
         return accessible(new AgentTraceTargets(
                 mode,
                 reasoningSuppressor,
@@ -247,9 +247,12 @@ final class AgentTraceTargetResolver {
     private boolean bundleLoader(Method method) {
         Class<?>[] parameters = method.getParameterTypes();
         return method.getName().equals("loadScript")
-                && parameters.length == 2
+                && (parameters.length == 2 || parameters.length == 3)
                 && parameters[0] == String.class
                 && parameters[1] == boolean.class
+                && (parameters.length != 3
+                        || (!parameters[2].isPrimitive()
+                        && parameters[2].getName().contains("ReactContext")))
                 && method.getReturnType() == boolean.class
                 && hasMethodIncludingAncestors(
                         method.getDeclaringClass(), "getReactInstanceManager", 0)
@@ -401,7 +404,37 @@ final class AgentTraceTargetResolver {
     }
 
     private Method findBundleLoader(Class<?> owner) {
-        return owner == null ? null : uniqueMethod(List.of(owner.getName()), this::bundleLoader);
+        return owner == null ? null : findBundleLoader(List.of(owner.getName()));
+    }
+
+    private Method findBundleLoader(List<String> names) {
+        Method twoParameter = null;
+        Method threeParameter = null;
+        for (String name : names) {
+            Class<?> candidate = tryLoad(name);
+            if (candidate == null) {
+                continue;
+            }
+            for (Method method : candidate.getDeclaredMethods()) {
+                if (!bundleLoader(method)) {
+                    continue;
+                }
+                if (method.getParameterCount() == 3) {
+                    if (threeParameter != null && !sameSignature(threeParameter, method)) {
+                        return null;
+                    }
+                    threeParameter = method;
+                } else {
+                    if (twoParameter != null && !sameSignature(twoParameter, method)) {
+                        return null;
+                    }
+                    twoParameter = method;
+                }
+            }
+        }
+        // New XiaoAi delegates call the context-aware overload directly. Hooking it also
+        // covers the two-parameter overload because that overload forwards into this one.
+        return threeParameter != null ? threeParameter : twoParameter;
     }
 
     private Method findToastStreamBuilder(Class<?> owner) {
