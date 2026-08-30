@@ -11,10 +11,24 @@ import java.util.Map;
 final class AgentTraceTargetResolver {
     private static final String KNOWN_REASONING_STATE =
             "com.xiaomi.voiceassist.miclaw.model.MiClawStreamingState$Reasoning";
-    private static final String KNOWN_ENVELOPE_MAPPER = "ts0.c$b";
-    private static final String KNOWN_REASONING_MAPPER = "vs0.f";
-    private static final String KNOWN_TOOL_BUILDER = "us0.a";
-    private static final String KNOWN_BUNDLE_LOADER = "rd1.y";
+    private static final KnownProfile CURRENT_PROFILE = new KnownProfile(
+            "verified-8.2.3",
+            "o61.e$e",
+            "o61.e",
+            "d51.c$b",
+            "f51.g",
+            "e51.a",
+            "zq1.z"
+    );
+    private static final KnownProfile LEGACY_PROFILE = new KnownProfile(
+            "verified-8.0.30",
+            "cu0.e$d",
+            "cu0.e",
+            "ts0.c$b",
+            "vs0.f",
+            "us0.a",
+            "rd1.y"
+    );
 
     private final ClassLoader classLoader;
     private final List<String> candidateNames;
@@ -63,6 +77,13 @@ final class AgentTraceTargetResolver {
     }
 
     private AgentTraceTargets resolveKnownProfile() {
+        AgentTraceTargets current = resolveKnownProfile(CURRENT_PROFILE);
+        return current.hasAllCapabilities()
+                ? current
+                : current.withFallback(resolveKnownProfile(LEGACY_PROFILE));
+    }
+
+    private AgentTraceTargets resolveKnownProfile(KnownProfile profile) {
         Method reasoningSuppressor = null;
         Constructor<?> reasoningConstructor = null;
         Method reasoningResponseMapper = null;
@@ -75,28 +96,29 @@ final class AgentTraceTargetResolver {
             Class<?> reasoningState = load(KNOWN_REASONING_STATE);
             reasoningConstructor = reasoningState.getDeclaredConstructor(String.class);
             reasoningSuppressor = uniqueMethod(
-                    List.of(load("cu0.e$d").getName()), this::reasoningSuppressor);
+                    List.of(load(profile.reasoningSuppressor()).getName()),
+                    this::reasoningSuppressor);
             reasoningResponseMapper = findReasoningResponseMapper(
-                    load("cu0.e"), reasoningSuppressor);
-            envelopeFrom = findEnvelopeFrom(load(KNOWN_ENVELOPE_MAPPER), reasoningState);
-            reasoningMapper = findReasoningMapper(load(KNOWN_REASONING_MAPPER));
+                    load(profile.reasoningResponseMapper()), reasoningSuppressor);
+            envelopeFrom = findEnvelopeFrom(load(profile.envelopeMapper()), reasoningState);
+            reasoningMapper = findReasoningMapper(load(profile.reasoningMapper()));
         } catch (Throwable ignored) {
             // Each capability is allowed to degrade independently.
         }
         try {
-            Class<?> builder = load(KNOWN_TOOL_BUILDER);
+            Class<?> builder = load(profile.toolBuilder());
             toolCallBuilder = findToolBuilder(builder);
             toastStreamBuilder = findToastStreamBuilder(builder);
         } catch (Throwable ignored) {
             // Tool detail expansion can fall back to the host summary.
         }
         try {
-            bundleLoader = findBundleLoader(load(KNOWN_BUNDLE_LOADER));
+            bundleLoader = findBundleLoader(load(profile.bundleLoader()));
         } catch (Throwable ignored) {
             // The host bundle remains loadable without the optional patch.
         }
         return accessible(new AgentTraceTargets(
-                "verified-profile",
+                profile.mode(),
                 reasoningSuppressor,
                 reasoningConstructor,
                 reasoningResponseMapper,
@@ -167,10 +189,49 @@ final class AgentTraceTargetResolver {
                 || method.getReturnType() != boolean.class) {
             return false;
         }
-        Class<?> owner = method.getDeclaringClass();
-        return hasMethod(owner, "stripDelta", 1)
-                && hasMethod(owner, "stripCompleted", 1)
-                && hasMethod(owner, "flushPending", 0);
+        return hasReasoningTransformFamily(method.getDeclaringClass());
+    }
+
+    private static boolean hasReasoningTransformFamily(Class<?> owner) {
+        Method delta = null;
+        Method completed = null;
+        Method flush = null;
+        for (Method candidate : owner.getDeclaredMethods()) {
+            Class<?>[] parameters = candidate.getParameterTypes();
+            if ((candidate.getName().equals("stripDelta")
+                    || candidate.getName().equals("stripCompleted"))
+                    && (parameters.length == 1 || parameters.length == 2)
+                    && parameters[0] == String.class
+                    && !candidate.getReturnType().isPrimitive()) {
+                if (candidate.getName().equals("stripDelta")) {
+                    delta = candidate;
+                } else {
+                    completed = candidate;
+                }
+            } else if (candidate.getName().equals("flushPending")
+                    && parameters.length == 0
+                    && !candidate.getReturnType().isPrimitive()) {
+                flush = candidate;
+            }
+        }
+        return delta != null && completed != null && flush != null
+                && sameParameters(delta, completed)
+                && delta.getReturnType() == completed.getReturnType()
+                && delta.getReturnType() == flush.getReturnType();
+    }
+
+    private static boolean sameParameters(Method first, Method second) {
+        Class<?>[] left = first.getParameterTypes();
+        Class<?>[] right = second.getParameterTypes();
+        if (left.length != right.length) {
+            return false;
+        }
+        for (int index = 0; index < left.length; index++) {
+            if (left[index] != right[index]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private boolean toolBuilder(Method method) {
@@ -458,5 +519,16 @@ final class AgentTraceTargetResolver {
         } else if (executable instanceof Constructor<?> constructor) {
             constructor.setAccessible(true);
         }
+    }
+
+    private record KnownProfile(
+            String mode,
+            String reasoningSuppressor,
+            String reasoningResponseMapper,
+            String envelopeMapper,
+            String reasoningMapper,
+            String toolBuilder,
+            String bundleLoader
+    ) {
     }
 }
