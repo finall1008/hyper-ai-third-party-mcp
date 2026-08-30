@@ -16,22 +16,12 @@ fi
 DEX_STRINGS_FILE=$(mktemp "${TMPDIR:-/tmp}/xiaoai-dex-strings.XXXXXX")
 trap 'rm -f "$DEX_STRINGS_FILE"' EXIT HUP INT TERM
 unzip -p "$APK" 'classes*.dex' | strings > "$DEX_STRINGS_FILE"
-for MARKER in \
-    'syncConfigAndDiscoverIfNeeded' \
-    'reloadConfig' \
-    'loadCatalogAndRegister' \
-    'personal_mcp_servers.json'; do
-    if ! rg -F -q "$MARKER" "$DEX_STRINGS_FILE"; then
-        echo "Missing compatibility marker: $MARKER" >&2
-        exit 1
-    fi
-    echo "Found compatibility marker: $MARKER"
-done
 
-if rg -F -q 'Ll8/w1;' "$DEX_STRINGS_FILE"; then
-    echo "Found verified-profile manager marker: Ll8/w1;"
+echo "MCP injection is retired; native MCP markers are informational only."
+if rg -F -q 'personal_mcp_servers.json' "$DEX_STRINGS_FILE"; then
+    echo "Found native MCP marker: personal_mcp_servers.json"
 else
-    echo "Verified-profile manager marker not found; runtime structural discovery is required."
+    echo "Native MCP marker not found; use XiaoAi 8.2.3.1619 or newer for third-party MCP." >&2
 fi
 
 for MARKER in \
@@ -95,4 +85,4 @@ for MARKER in \
     fi
 done
 
-echo "Compatibility markers found. Runtime structural resolution is still required."
+echo "Marker scan complete. Runtime structural resolution is still authoritative."

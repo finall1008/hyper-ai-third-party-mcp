@@ -239,12 +239,26 @@ final class FilePolicyHookResolver {
     }
 
     private RiskCandidate riskCandidate(Class<?> manager) {
-        if (findMethodNamed(manager, "checkToolRisk", 5) == null
-                || findMethodNamed(manager, "checkCliCommand", 4) == null
-                || findMethodNamed(manager, "confirmByCategory$runtime", 4) == null
-                || findMethodNamed(manager, "requestConsent$runtime", 5) == null) {
+        Method toolRisk = findRiskEntryMethod(manager, "checkToolRisk", false);
+        Method cliRisk = findRiskEntryMethod(manager, "checkCliCommand", true);
+        if (toolRisk == null || cliRisk == null) {
             return null;
         }
+        Class<?> continuation = lastParameter(toolRisk);
+        if (continuation == null || continuation != lastParameter(cliRisk)) {
+            return null;
+        }
+        Class<?> contextType = uniqueSharedRiskContext(toolRisk, cliRisk);
+        if (contextType == null
+                || !hasAsyncAnchor(manager, "confirmByCategory$runtime",
+                        contextType, continuation)
+                || !hasAsyncAnchor(manager, "requestConsent$runtime",
+                        contextType, continuation)) {
+            return null;
+        }
+        Method getAgentId = findPublicOrDeclaredMethod(contextType, "getAgentId");
+        Method getSharedState = findPublicOrDeclaredMethod(contextType, "getSharedState");
+        Method getSessionId = findPublicOrDeclaredMethod(contextType, "getSessionId");
         RiskCandidate match = null;
         for (Method method : manager.getDeclaredMethods()) {
             Class<?>[] parameters = method.getParameterTypes();
@@ -252,12 +266,10 @@ final class FilePolicyHookResolver {
                     || method.getReturnType() != boolean.class
                     || parameters.length != 4
                     || !List.class.isAssignableFrom(parameters[0])
+                    || parameters[1] != contextType
                     || parameters[3] != String.class) {
                 continue;
             }
-            Method getAgentId = findPublicOrDeclaredMethod(parameters[1], "getAgentId");
-            Method getSharedState = findPublicOrDeclaredMethod(parameters[1], "getSharedState");
-            Method getSessionId = findPublicOrDeclaredMethod(parameters[1], "getSessionId");
             Method getFirst = findPublicOrDeclaredMethod(parameters[2], "getFirst");
             Method getSecond = findPublicOrDeclaredMethod(parameters[2], "getSecond");
             if (getAgentId == null
@@ -277,6 +289,85 @@ final class FilePolicyHookResolver {
                     getFirst, getSecond);
         }
         return match;
+    }
+
+    private static Method findRiskEntryMethod(Class<?> type, String name, boolean cli) {
+        Method match = null;
+        for (Method method : type.getDeclaredMethods()) {
+            Class<?>[] parameters = method.getParameterTypes();
+            if (!method.getName().equals(name)
+                    || Modifier.isStatic(method.getModifiers())
+                    || method.getReturnType().isPrimitive()
+                    || parameters.length < (cli ? 4 : 3)
+                    || parameters[0] != String.class
+                    || parameters[parameters.length - 1].isPrimitive()
+                    || (cli && !List.class.isAssignableFrom(parameters[1]))) {
+                continue;
+            }
+            if (match != null) {
+                return null;
+            }
+            match = method;
+        }
+        return match;
+    }
+
+    private static Class<?> lastParameter(Method method) {
+        if (method == null || method.getParameterCount() == 0) {
+            return null;
+        }
+        Class<?>[] parameters = method.getParameterTypes();
+        return parameters[parameters.length - 1];
+    }
+
+    private static Class<?> uniqueSharedRiskContext(Method first, Method second) {
+        Class<?> match = null;
+        for (Class<?> candidate : first.getParameterTypes()) {
+            if (!containsParameter(second, candidate) || !hasRiskContextShape(candidate)) {
+                continue;
+            }
+            if (match != null && match != candidate) {
+                return null;
+            }
+            match = candidate;
+        }
+        return match;
+    }
+
+    private static boolean containsParameter(Method method, Class<?> type) {
+        for (Class<?> parameter : method.getParameterTypes()) {
+            if (parameter == type) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasRiskContextShape(Class<?> type) {
+        Method agent = findPublicOrDeclaredMethod(type, "getAgentId");
+        Method state = findPublicOrDeclaredMethod(type, "getSharedState");
+        Method session = findPublicOrDeclaredMethod(type, "getSessionId");
+        return agent != null && agent.getReturnType() == String.class
+                && state != null && Map.class.isAssignableFrom(state.getReturnType())
+                && session != null && session.getReturnType() == String.class;
+    }
+
+    private static boolean hasAsyncAnchor(
+            Class<?> type,
+            String name,
+            Class<?> context,
+            Class<?> continuation
+    ) {
+        for (Method method : type.getDeclaredMethods()) {
+            if (method.getName().equals(name)
+                    && !Modifier.isStatic(method.getModifiers())
+                    && !method.getReturnType().isPrimitive()
+                    && lastParameter(method) == continuation
+                    && containsParameter(method, context)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Method findUriResolve(Class<?> candidate) {

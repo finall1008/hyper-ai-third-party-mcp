@@ -10,13 +10,7 @@ import java.util.List;
 import java.util.Set;
 
 final class DexKitTargetLocator {
-    private static final String MCP_CONFIG_MARKER = "personal_mcp_servers.json";
     private static final List<String> METHOD_ANCHORS = List.of(
-            "syncConfigAndDiscoverIfNeeded",
-            "reloadConfig",
-            "loadCatalogAndRegister",
-            "getAllServers",
-            "getGatewayMode",
             "resolveToFile",
             "listVirtualRoot",
             "isCommandNameAllowed",
@@ -65,19 +59,10 @@ final class DexKitTargetLocator {
         ensureNativeLoaded();
 
         Set<String> allClasses = new LinkedHashSet<>();
-        Set<String> managerClasses = new LinkedHashSet<>();
         Set<String> agentTraceClasses = new LinkedHashSet<>();
         Set<String> promptClasses = new LinkedHashSet<>();
         int matchedMethods = 0;
         try (DexKitBridge bridge = DexKitBridge.create(classLoader, false)) {
-            List<MethodData> markerMethods = bridge.findMethod(FindMethod.create().matcher(
-                    MethodMatcher.create().usingStrings(MCP_CONFIG_MARKER)
-            ));
-            matchedMethods += markerMethods.size();
-            addDeclaringClasses(markerMethods, allClasses);
-            addTextReaderDeclaringClasses(markerMethods, managerClasses);
-            addRelatedDeclaringClasses(markerMethods, allClasses);
-
             MethodMatcher[] anchors = METHOD_ANCHORS.stream()
                     .map(name -> MethodMatcher.create().name(name))
                     .toArray(MethodMatcher[]::new);
@@ -131,7 +116,6 @@ final class DexKitTargetLocator {
         long elapsedMillis = (System.nanoTime() - started) / 1_000_000L;
         return new DexDiscoveryHints(
                 List.copyOf(allClasses),
-                managerClasses,
                 agentTraceClasses,
                 List.copyOf(promptClasses),
                 matchedMethods,
@@ -161,18 +145,6 @@ final class DexKitTargetLocator {
                 addDeclaringClasses(method.getInvokes(), destination);
             } catch (Throwable ignored) {
                 // Relationship metadata is an optional hint; direct query results remain usable.
-            }
-        }
-    }
-
-    private static void addTextReaderDeclaringClasses(
-            List<MethodData> methods,
-            Set<String> destination
-    ) {
-        for (MethodData method : methods) {
-            if (method.getParamCount() == 0
-                    && "java.lang.String".equals(method.getReturnTypeName())) {
-                addDeclaringClasses(List.of(method), destination);
             }
         }
     }

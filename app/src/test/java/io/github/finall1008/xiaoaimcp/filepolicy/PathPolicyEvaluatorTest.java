@@ -79,6 +79,16 @@ public final class PathPolicyEvaluatorTest {
                 config, "rm", List.of("-r", root.getPath())));
         assertFalse(LockscreenFileAccessEvaluator.isCliCommandAllowed(
                 config, "find", List.of(root.getPath(), "-delete")));
+        assertFalse(LockscreenFileAccessEvaluator.isCliCommandAllowed(
+                config, "rm", List.of("-rv", root.getPath())));
+        assertFalse(LockscreenFileAccessEvaluator.isCliCommandAllowed(
+                config, "rm", List.of("-Rfv", root.getPath())));
+        assertFalse(LockscreenFileAccessEvaluator.isCliCommandAllowed(
+                config, "rm", List.of("--unknown", new File(root, "a.txt").getPath())));
+        assertFalse(LockscreenFileAccessEvaluator.isCliCommandAllowed(
+                config, "sed", List.of("-i", "e id", file)));
+        assertFalse(LockscreenFileAccessEvaluator.isCliCommandAllowed(
+                config, "sed", List.of("-i", "s/a/b/", "relative.txt", file)));
         assertTrue(LockscreenFileAccessEvaluator.isDirectToolAllowed(
                 config, "read_file", Map.of("path", file)));
     }
@@ -103,6 +113,12 @@ public final class PathPolicyEvaluatorTest {
                 )));
         assertTrue(LockscreenFileAccessEvaluator.isCliCommandAllowed(
                 config, "cp", List.of(source, destination)));
+        assertTrue(LockscreenFileAccessEvaluator.isCliCommandAllowed(
+                config, "cp", List.of("--target-directory=" + destinationRoot.getPath(), source)));
+        assertFalse(LockscreenFileAccessEvaluator.isCliCommandAllowed(
+                config, "cp", List.of("--target-directory=/storage/emulated/0/outside", source)));
+        assertFalse(LockscreenFileAccessEvaluator.isCliCommandAllowed(
+                config, "cp", List.of(source, "relative-output.txt")));
         assertFalse(LockscreenFileAccessEvaluator.isDirectToolAllowed(
                 config, "move_file", Map.of(
                         "source", source,

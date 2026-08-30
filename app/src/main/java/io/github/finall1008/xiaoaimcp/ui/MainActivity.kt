@@ -1,17 +1,18 @@
 package io.github.finall1008.xiaoaimcp.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.SharedPreferences
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -26,15 +27,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.finall1008.xiaoaimcp.BridgeApplication
 import io.github.finall1008.xiaoaimcp.BridgeContract
 import io.github.finall1008.xiaoaimcp.BuildConfig
 import io.github.finall1008.xiaoaimcp.R
 import io.github.finall1008.xiaoaimcp.TargetVersionPolicy
-import io.github.finall1008.xiaoaimcp.config.McpServer
-import io.github.finall1008.xiaoaimcp.config.RemoteConfigRepository
+import io.github.finall1008.xiaoaimcp.config.LegacyMcpConfigRepository
 import io.github.finall1008.xiaoaimcp.filepolicy.FilePolicyConfig
 import io.github.finall1008.xiaoaimcp.filepolicy.FilePolicyRepository
 import io.github.finall1008.xiaoaimcp.restart.RestartStateListener
@@ -50,13 +49,8 @@ import top.yukonga.miuix.kmp.basic.FloatingNavigationBarItem
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Add
-import top.yukonga.miuix.kmp.icon.extended.Delete
-import top.yukonga.miuix.kmp.icon.extended.Edit
-import top.yukonga.miuix.kmp.icon.extended.Folder
 import top.yukonga.miuix.kmp.icon.extended.Home
 import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Link
@@ -68,7 +62,6 @@ import top.yukonga.miuix.kmp.icon.extended.Timer
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import java.util.Locale
 
 class MainActivity :
     ComponentActivity(),
@@ -77,8 +70,9 @@ class MainActivity :
     private var state by mutableStateOf(MainUiState())
     private var errorMessage by mutableStateOf<String?>(null)
     private var preferences: SharedPreferences? = null
-    private var repository: RemoteConfigRepository? = null
+    private var legacyMcpRepository: LegacyMcpConfigRepository? = null
     private var restartInFlight by mutableStateOf(false)
+    private var legacyMigrationNoticePending by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,7 +85,6 @@ class MainActivity :
                         XiaoAiRootRestarter.clearError()
                         errorMessage = null
                     },
-                    onAdd = { startActivity(Intent(this, ServerEditActivity::class.java)) },
                     onOpenFilePolicy = {
                         startActivity(Intent(this, FilePolicyActivity::class.java))
                     },
@@ -105,9 +98,9 @@ class MainActivity :
                     restartInFlight = restartInFlight,
                     onRestartXiaoAi = ::restartXiaoAi,
                     onOpenReleases = ::openReleases,
-                    onEdit = ::edit,
-                    onEnabledChange = ::setServerEnabled,
-                    onDelete = ::delete,
+                    showLegacyMcpMigrationNotice = legacyMigrationNoticePending,
+                    onDismissLegacyMcpMigrationNotice = ::dismissLegacyMcpMigrationNotice,
+                    onCopyLegacyMcpConfig = ::copyLegacyMcpConfig,
                 )
             }
         }
@@ -159,19 +152,28 @@ class MainActivity :
             }
         }
 
-        val (targetStatus, targetReady) = targetStatus()
+        val (targetStatus, targetReady, nativeMcpAvailable) = targetStatus()
         preferences = if (serviceReady) {
             BridgeApplication.remotePreferences()
         } else {
             null
         }
-        repository = preferences?.let(::RemoteConfigRepository)
-        val servers = try {
-            repository?.load().orEmpty()
+        legacyMcpRepository = preferences?.let(::LegacyMcpConfigRepository)
+        val legacyServers = try {
+            legacyMcpRepository?.load().orEmpty()
         } catch (error: Exception) {
-            frameworkStatus = StatusUi(StatusLevel.ERROR, "MCP 配置损坏：${safeMessage(error)}")
+            frameworkStatus = StatusUi(
+                StatusLevel.ERROR,
+                "旧版 MCP 配置损坏，无法导出：${safeMessage(error)}",
+            )
             emptyList()
         }
+        legacyMigrationNoticePending = legacyServers.isNotEmpty() &&
+            nativeMcpAvailable &&
+            preferences?.getBoolean(
+                BridgeContract.PREF_LEGACY_MCP_MIGRATION_NOTICE_SEEN,
+                false,
+            ) != true
         val filePolicySummary = if (preferences == null) {
             "API 102 服务未连接"
         } else {
@@ -193,12 +195,13 @@ class MainActivity :
                 FirstOutputTimeoutRepository(it).load()
             } ?: FirstOutputTimeoutConfig.hostDefault(),
             filePolicySummary = filePolicySummary,
-            servers = servers,
+            legacyMcpServerCount = legacyServers.size,
+            nativeMcpAvailable = nativeMcpAvailable,
         )
     }
 
     @Suppress("DEPRECATION")
-    private fun targetStatus(): Pair<StatusUi, Boolean> {
+    private fun targetStatus(): Triple<StatusUi, Boolean, Boolean> {
         return try {
             val info = packageManager.getPackageInfo(BridgeContract.TARGET_PACKAGE, 0)
             val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -212,37 +215,47 @@ class MainActivity :
                 BridgeContract.REFERENCE_VERSION_NAME == versionName &&
                 BridgeContract.REFERENCE_VERSION_CODE == code
             val version = "超级小爱 ${versionName.toString()} ($code)"
+            val nativeMcp = TargetVersionPolicy.hasNativeMcp(versionName)
             when {
-                reference -> StatusUi(StatusLevel.SUCCESS, "$version · 已验证") to true
+                !nativeMcp && supported -> StatusUi(
+                    StatusLevel.WARNING,
+                    "$version · 增强功能可用；原生 MCP 需 ${BridgeContract.NATIVE_MCP_VERSION_NAME}+",
+                ).withReadiness(true, false)
+                reference -> StatusUi(StatusLevel.SUCCESS, "$version · 已验证")
+                    .withReadiness(true, true)
                 supported -> StatusUi(
                     StatusLevel.WARNING,
                     "$version · 将在目标进程中自动探测兼容性",
-                ) to true
+                ).withReadiness(true, true)
                 else -> {
                     val reason = if (TargetVersionPolicy.parseMajor(versionName).isPresent) {
                         "要求超级小爱 8.0 或更高版本"
                     } else {
                         "无法识别版本号，要求超级小爱 8.0 或更高版本"
                     }
-                    StatusUi(StatusLevel.ERROR, "$version · $reason") to false
+                    StatusUi(StatusLevel.ERROR, "$version · $reason")
+                        .withReadiness(false, false)
                 }
             }
         } catch (_: PackageManager.NameNotFoundException) {
-            StatusUi(StatusLevel.ERROR, "未安装超级小爱：${BridgeContract.TARGET_PACKAGE}") to false
+            StatusUi(StatusLevel.ERROR, "未安装超级小爱：${BridgeContract.TARGET_PACKAGE}")
+                .withReadiness(false, false)
         }
     }
 
-    private fun edit(server: McpServer) {
-        startActivity(
-            Intent(this, ServerEditActivity::class.java)
-                .putExtra(ServerEditActivity.EXTRA_SERVER_ID, server.id()),
-        )
-    }
-
-    private fun setServerEnabled(server: McpServer, enabled: Boolean) {
+    private fun copyLegacyMcpConfig() {
         try {
-            requireRepository().setEnabled(server.id(), enabled)
-            refresh()
+            val json = legacyMcpRepository?.exportNativeConfig()
+                ?: error("API 102 服务未连接")
+            val clipboard = getSystemService(ClipboardManager::class.java)
+                ?: error("系统剪贴板不可用")
+            clipboard.setPrimaryClip(ClipData.newPlainText("超级小爱 MCP 配置", json))
+            Toast.makeText(
+                this,
+                "已复制，请粘贴到超级小爱 → 设置 → MCP 服务",
+                Toast.LENGTH_LONG,
+            ).show()
+            dismissLegacyMcpMigrationNotice()
         } catch (error: Exception) {
             errorMessage = safeMessage(error)
         }
@@ -271,17 +284,11 @@ class MainActivity :
         XiaoAiRootRestarter.restart(applicationContext)
     }
 
-    private fun delete(server: McpServer) {
-        try {
-            requireRepository().delete(server.id())
-            refresh()
-        } catch (error: Exception) {
-            errorMessage = safeMessage(error)
-        }
-    }
-
-    private fun requireRepository(): RemoteConfigRepository {
-        return repository ?: error("API 102 服务未连接")
+    private fun dismissLegacyMcpMigrationNotice() {
+        preferences?.edit()
+            ?.putBoolean(BridgeContract.PREF_LEGACY_MCP_MIGRATION_NOTICE_SEEN, true)
+            ?.apply()
+        legacyMigrationNoticePending = false
     }
 }
 
@@ -293,7 +300,8 @@ private data class MainUiState(
     val firstOutputTimeout: FirstOutputTimeoutConfig =
         FirstOutputTimeoutConfig.hostDefault(),
     val filePolicySummary: String = "正在读取文件权限配置…",
-    val servers: List<McpServer> = emptyList(),
+    val legacyMcpServerCount: Int = 0,
+    val nativeMcpAvailable: Boolean = false,
 )
 
 private data class StatusUi(val level: StatusLevel, val text: String)
@@ -315,7 +323,6 @@ private fun MainScreen(
     state: MainUiState,
     errorMessage: String?,
     onDismissError: () -> Unit,
-    onAdd: () -> Unit,
     onOpenFilePolicy: () -> Unit,
     onOpenPromptPatches: () -> Unit,
     onAgentTraceEnabledChange: (Boolean) -> Unit,
@@ -323,11 +330,10 @@ private fun MainScreen(
     restartInFlight: Boolean,
     onRestartXiaoAi: () -> Unit,
     onOpenReleases: () -> Unit,
-    onEdit: (McpServer) -> Unit,
-    onEnabledChange: (McpServer, Boolean) -> Unit,
-    onDelete: (McpServer) -> Unit,
+    showLegacyMcpMigrationNotice: Boolean,
+    onDismissLegacyMcpMigrationNotice: () -> Unit,
+    onCopyLegacyMcpConfig: () -> Unit,
 ) {
-    var pendingDelete by remember { mutableStateOf<McpServer?>(null) }
     var showRestartConfirmation by remember { mutableStateOf(false) }
     var selectedPage by rememberSaveable { mutableStateOf(DEFAULT_ROOT_PAGE) }
     val appName = stringResource(R.string.app_name)
@@ -359,14 +365,11 @@ private fun MainScreen(
                         state = state,
                         scaffoldPadding = padding,
                         scrollBehavior = scrollBehavior,
-                        onAdd = onAdd,
                         onOpenFilePolicy = onOpenFilePolicy,
                         onOpenPromptPatches = onOpenPromptPatches,
                         onAgentTraceEnabledChange = onAgentTraceEnabledChange,
                         onEditTimeout = onOpenFirstOutputTimeout,
-                        onEdit = onEdit,
-                        onEnabledChange = onEnabledChange,
-                        onDelete = { pendingDelete = it },
+                        onCopyLegacyMcpConfig = onCopyLegacyMcpConfig,
                     )
                     RootPage.ABOUT -> AboutPage(
                         scaffoldPadding = padding,
@@ -412,17 +415,12 @@ private fun MainScreen(
         },
     )
     ConfirmDialog(
-        show = pendingDelete != null,
-        title = "删除服务器",
-        message = pendingDelete?.let {
-            "确认删除 “${it.name()}”？超级小爱中的对应工具会在线注销。"
-        }.orEmpty(),
-        confirmText = "删除",
-        onDismiss = { pendingDelete = null },
-        onConfirm = {
-            pendingDelete?.let(onDelete)
-            pendingDelete = null
-        },
+        show = showLegacyMcpMigrationNotice,
+        title = "迁移旧版 MCP 配置",
+        message = "模块已停用第三方 MCP 注入，检测到旧配置。可以复制为超级小爱原生 JSON；内容可能包含请求头和访问凭据，请勿分享。",
+        confirmText = "复制配置",
+        onDismiss = onDismissLegacyMcpMigrationNotice,
+        onConfirm = onCopyLegacyMcpConfig,
     )
     MessageDialog(
         message = errorMessage,
@@ -436,14 +434,11 @@ private fun HomePage(
     state: MainUiState,
     scaffoldPadding: PaddingValues,
     scrollBehavior: ScrollBehavior,
-    onAdd: () -> Unit,
     onOpenFilePolicy: () -> Unit,
     onOpenPromptPatches: () -> Unit,
     onAgentTraceEnabledChange: (Boolean) -> Unit,
     onEditTimeout: () -> Unit,
-    onEdit: (McpServer) -> Unit,
-    onEnabledChange: (McpServer, Boolean) -> Unit,
-    onDelete: (McpServer) -> Unit,
+    onCopyLegacyMcpConfig: () -> Unit,
 ) {
     BridgePageList(
         scaffoldPadding = scaffoldPadding,
@@ -496,33 +491,27 @@ private fun HomePage(
                 )
             }
         }
-        item { SectionLabel("MCP 服务器", Modifier.padding(top = 4.dp)) }
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                ArrowPreference(
-                    title = "添加 MCP 服务器",
-                    summary = "连接第三方 Streamable HTTP 或 SSE 服务",
-                    startAction = { PreferenceIcon(MiuixIcons.Add) },
-                    enabled = state.editingEnabled,
-                    onClick = onAdd,
-                )
-                if (state.servers.isEmpty()) {
-                    BasicComponent(
-                        title = "尚未添加服务器",
-                        summary = "添加后可在这里启停、编辑或删除",
+        if (state.legacyMcpServerCount > 0) {
+            item { SectionLabel("旧版 MCP 配置", Modifier.padding(top = 4.dp)) }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    ArrowPreference(
+                        title = "复制原生 MCP JSON",
+                        summary = if (state.nativeMcpAvailable) {
+                            "${state.legacyMcpServerCount} 个旧服务器；模块不再注入，请迁移到超级小爱设置"
+                        } else {
+                            "${state.legacyMcpServerCount} 个旧服务器；升级到 ${BridgeContract.NATIVE_MCP_VERSION_NAME}+ 后迁移"
+                        },
                         startAction = { PreferenceIcon(MiuixIcons.Link) },
+                        enabled = state.editingEnabled && state.nativeMcpAvailable,
+                        onClick = onCopyLegacyMcpConfig,
+                    )
+                    BasicComponent(
+                        title = "迁移位置",
+                        summary = "超级小爱 → 设置 → MCP 服务；剪贴板内容可能包含访问凭据",
+                        startAction = { PreferenceIcon(MiuixIcons.Info) },
                         enabled = false,
                     )
-                } else {
-                    state.servers.forEach { server ->
-                        ServerPreference(
-                            server = server,
-                            editingEnabled = state.editingEnabled,
-                            onEdit = { onEdit(server) },
-                            onEnabledChange = { onEnabledChange(server, it) },
-                            onDelete = { onDelete(server) },
-                        )
-                    }
                 }
             }
         }
@@ -595,69 +584,9 @@ internal fun aboutVersionLabel(versionName: String): String {
     return "当前版本 $versionName"
 }
 
-@Composable
-private fun ServerPreference(
-    server: McpServer,
-    editingEnabled: Boolean,
-    onEdit: () -> Unit,
-    onEnabledChange: (Boolean) -> Unit,
-    onDelete: () -> Unit,
-) {
-    BasicComponent(
-        startAction = { PreferenceIcon(MiuixIcons.Folder) },
-        endActions = {
-            Switch(
-                checked = server.enabled(),
-                onCheckedChange = if (editingEnabled) onEnabledChange else null,
-                enabled = editingEnabled,
-            )
-        },
-        bottomAction = if (editingEnabled) {
-            {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    IconButton(onClick = onEdit) {
-                        Icon(
-                            imageVector = MiuixIcons.Edit,
-                            contentDescription = "编辑 ${server.name()}",
-                            tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                        )
-                    }
-                    IconButton(onClick = onDelete) {
-                        Icon(
-                            imageVector = MiuixIcons.Delete,
-                            contentDescription = "删除 ${server.name()}",
-                            tint = MiuixTheme.colorScheme.error,
-                        )
-                    }
-                }
-            }
-        } else {
-            null
-        },
-        onClick = if (editingEnabled) onEdit else null,
-        enabled = editingEnabled,
-    ) {
-        Text(
-            server.name(),
-            style = MiuixTheme.textStyles.body1,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        val detail = buildString {
-            append(server.transport().uppercase(Locale.ROOT))
-            append(" · ")
-            append(server.url())
-            if (server.headers().isNotEmpty()) append(" · ${server.headers().size} 个请求头")
-        }
-        Text(
-            detail,
-            style = MiuixTheme.textStyles.footnote1,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+private fun StatusUi.withReadiness(
+    targetReady: Boolean,
+    nativeMcpAvailable: Boolean,
+): Triple<StatusUi, Boolean, Boolean> {
+    return Triple(this, targetReady, nativeMcpAvailable)
 }

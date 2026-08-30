@@ -4,7 +4,10 @@ import org.json.JSONObject;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class AgentToolTraceStoreTest {
     @Test
@@ -44,5 +47,33 @@ public final class AgentToolTraceStoreTest {
         AgentToolTraceStore store = new AgentToolTraceStore();
         String payload = "not-json";
         assertTrue(store.merge("dialog-1", "done", payload).equals(payload));
+    }
+
+    @Test
+    public void evictsOldestEntriesAtCapacity() throws Exception {
+        AtomicLong clock = new AtomicLong();
+        AgentToolTraceStore store = new AgentToolTraceStore(2, 1_000L, clock::get);
+
+        store.merge("dialog", "start", "{\"tool_call_id\":\"a\",\"arguments\":\"A\"}");
+        store.merge("dialog", "start", "{\"tool_call_id\":\"b\",\"arguments\":\"B\"}");
+        store.merge("dialog", "start", "{\"tool_call_id\":\"c\",\"arguments\":\"C\"}");
+
+        assertEquals(2, store.size());
+        assertFalse(new JSONObject(store.merge(
+                "dialog", "done", "{\"tool_call_id\":\"a\"}"
+        )).has("arguments"));
+    }
+
+    @Test
+    public void expiresMissingTerminalEventsAndClearsDialogs() {
+        AtomicLong clock = new AtomicLong();
+        AgentToolTraceStore store = new AgentToolTraceStore(4, 100L, clock::get);
+        store.merge("one", "start", "{\"tool_call_id\":\"a\",\"arguments\":\"A\"}");
+        store.merge("two", "start", "{\"tool_call_id\":\"b\",\"arguments\":\"B\"}");
+        store.clearDialog("one");
+        assertEquals(1, store.size());
+
+        clock.set(100L);
+        assertEquals(0, store.size());
     }
 }

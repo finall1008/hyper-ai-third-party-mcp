@@ -3,7 +3,6 @@ package io.github.finall1008.xiaoaimcp.config;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
-import static org.junit.Assert.assertTrue;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -45,51 +44,27 @@ public final class McpConfigCodecTest {
     }
 
     @Test
-    public void emptyModuleConfigDoesNotRewriteHostJson() throws Exception {
-        String host = "{\"gateway_mode\":true,\"servers\":[{\"name\":\"builtin\"}]}";
-        assertEquals(host, McpConfigCodec.mergeHostConfig(host, McpConfigCodec.emptyConfig()));
-    }
+    public void exportsNativeConfigWithoutModuleIds() throws Exception {
+        McpServer configured = server(
+                "module-only-id",
+                "search",
+                "https://example.com/mcp",
+                "http",
+                false,
+                Map.of("Authorization", "Bearer secret")
+        );
 
-    @Test
-    public void moduleServerWinsNameCollisionAndKeepsOtherHostServers() throws Exception {
-        String host = "{\"gateway_mode\":true,\"servers\":["
-                + "{\"name\":\"same\",\"url\":\"https://old.example/mcp\"},"
-                + "{\"name\":\"keep\",\"url\":\"https://keep.example/mcp\"}]}";
-        McpServer replacement = server("id", "same", "https://new.example/mcp", "http", false,
-                Map.of("X-API-Key", "top-secret"));
+        JSONObject exported = new JSONObject(McpConfigCodec.exportNativeConfig(
+                List.of(configured)));
+        JSONArray servers = exported.getJSONArray("servers");
+        JSONObject server = servers.getJSONObject(0);
 
-        JSONObject merged = new JSONObject(McpConfigCodec.mergeHostConfig(
-                host,
-                McpConfigCodec.encodeModuleConfig(List.of(replacement))
-        ));
-        JSONArray servers = merged.getJSONArray("servers");
-
-        assertEquals(2, servers.length());
-        assertEquals("keep", servers.getJSONObject(0).getString("name"));
-        JSONObject injected = servers.getJSONObject(1);
-        assertEquals("same", injected.getString("name"));
-        assertEquals("https://new.example/mcp", injected.getString("url"));
-        assertFalse(injected.getBoolean("enabled"));
-        assertTrue(injected.getBoolean("tool_prefix"));
-        assertFalse(injected.has("id"));
-    }
-
-    @Test
-    public void moduleCollisionAlsoRemovesLegacyMcpServersEntry() throws Exception {
-        String host = "{\"mcpServers\":{"
-                + "\"same\":{\"url\":\"https://old.example/mcp\"},"
-                + "\"keep\":{\"url\":\"https://keep.example/mcp\"}}}";
-        McpServer replacement = server("id", "same", "https://new.example/mcp", "sse", true,
-                Map.of());
-
-        JSONObject merged = new JSONObject(McpConfigCodec.mergeHostConfig(
-                host,
-                McpConfigCodec.encodeModuleConfig(List.of(replacement))
-        ));
-
-        assertFalse(merged.getJSONObject("mcpServers").has("same"));
-        assertTrue(merged.getJSONObject("mcpServers").has("keep"));
-        assertEquals("same", merged.getJSONArray("servers").getJSONObject(0).getString("name"));
+        assertEquals(1, servers.length());
+        assertEquals("search", server.getString("name"));
+        assertFalse(server.getBoolean("enabled"));
+        assertEquals("Bearer secret",
+                server.getJSONObject("headers").getString("Authorization"));
+        assertFalse(server.has("id"));
     }
 
     @Test
@@ -119,17 +94,5 @@ public final class McpConfigCodecTest {
                         "https://example.com/mcp", "http", true, injected)));
         assertThrows(Exception.class,
                 () -> McpConfigCodec.parseModuleConfig("{not-json"));
-    }
-
-    @Test
-    public void logSummaryNeverContainsHeaderValues() {
-        McpServer configured = server("1", "safe", "https://example.com/mcp", "http", true,
-                Map.of("Authorization", "Bearer do-not-log", "X-API-Key", "secret-two"));
-
-        String summary = McpConfigCodec.redactedForLog(List.of(configured));
-
-        assertTrue(summary.contains("headers=2"));
-        assertFalse(summary.contains("do-not-log"));
-        assertFalse(summary.contains("secret-two"));
     }
 }

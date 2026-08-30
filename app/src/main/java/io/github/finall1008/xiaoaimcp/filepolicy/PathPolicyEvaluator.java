@@ -31,15 +31,23 @@ public final class PathPolicyEvaluator {
         String canonicalTarget = target.getCanonicalPath();
         FileAccessRule best = null;
         int bestLength = -1;
+        String bestCanonicalRoot = null;
         for (FileAccessRule rule : config.rules()) {
             File rootFile = new File(rule.path());
             if (!rootFile.exists() || !rootFile.isDirectory()) {
                 continue;
             }
             String canonicalRoot = rootFile.getCanonicalPath();
-            if (isInside(canonicalTarget, canonicalRoot) && canonicalRoot.length() > bestLength) {
+            if (!isInside(canonicalTarget, canonicalRoot)) {
+                continue;
+            }
+            if (canonicalRoot.length() > bestLength) {
                 best = rule;
                 bestLength = canonicalRoot.length();
+                bestCanonicalRoot = canonicalRoot;
+            } else if (canonicalRoot.equals(bestCanonicalRoot)) {
+                // Equivalent aliases with conflicting rules must never become order-dependent.
+                return null;
             }
         }
         return best;
