@@ -5,6 +5,7 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.List;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 public final class AgentTraceTargetResolverTest {
@@ -24,6 +25,7 @@ public final class AgentTraceTargetResolverTest {
         );
 
         assertTrue(targets.hasAllCapabilities());
+        assertEquals(3, targets.bundleLoader().getParameterCount());
     }
 
     private static List<String> names(Class<?>... classes) {
@@ -105,6 +107,10 @@ public final class AgentTraceTargetResolverTest {
 
     public static final class RelocatedBundleLoader {
         public boolean loadScript(String path, boolean shared) {
+            return loadScript(path, shared, null);
+        }
+
+        public boolean loadScript(String path, boolean shared, FakeReactContext context) {
             return true;
         }
 
@@ -115,5 +121,8 @@ public final class AgentTraceTargetResolverTest {
         public Object getJavaScriptExecutorFactory() {
             return new Object();
         }
+    }
+
+    public static final class FakeReactContext {
     }
 }

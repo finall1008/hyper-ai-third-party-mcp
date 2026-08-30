@@ -655,9 +655,15 @@ public final class XiaoAiMcpModule extends XposedModule {
                             try {
                                 String patchedPath = AgentTraceBundlePatcher.patchPath(context, path);
                                 if (!path.equals(patchedPath)) {
+                                    Object[] arguments = new Object[
+                                            targets.bundleLoader().getParameterCount()];
+                                    arguments[0] = patchedPath;
+                                    for (int index = 1; index < arguments.length; index++) {
+                                        arguments[index] = chain.getArg(index);
+                                    }
                                     return chain.proceedWith(
                                             chain.getThisObject(),
-                                            new Object[]{patchedPath, chain.getArg(1)}
+                                            arguments
                                     );
                                 }
                                 if (path.contains("stream.bundle")
