@@ -35,6 +35,19 @@ for MARKER in \
     fi
 done
 
+for CLASS_DESCRIPTOR in \
+    'Lo61/e$e;' \
+    'Ld51/c$b;' \
+    'Lf51/g;' \
+    'Le51/a;' \
+    'Lzq1/z;'; do
+    if rg -F -q "$CLASS_DESCRIPTOR" "$DEX_STRINGS_FILE"; then
+        echo "Found XiaoAi 8.2.3 Agent Trace entry: $CLASS_DESCRIPTOR"
+    else
+        echo "XiaoAi 8.2.3 Agent Trace entry not found: $CLASS_DESCRIPTOR; verified fast-path compatibility is unavailable." >&2
+    fi
+done
+
 for MARKER in \
     'reasoning_delta' \
     'reasoningContent' \
