@@ -3,6 +3,7 @@ package io.github.finall1008.xiaoaimcp.hook;
 import org.luckypray.dexkit.DexKitBridge;
 import org.luckypray.dexkit.query.FindMethod;
 import org.luckypray.dexkit.query.matchers.MethodMatcher;
+import org.luckypray.dexkit.result.ClassData;
 import org.luckypray.dexkit.result.MethodData;
 
 import java.util.LinkedHashSet;
@@ -29,6 +30,9 @@ final class DexKitTargetLocator {
             "tool_done",
             "tool_failed",
             "tool_call_id",
+            "AgentMeta(resolvedSystemPrompt=",
+            "UserInput(text=",
+            "ToolExecuting(toolName=",
             "ToolCallItem",
             "MICLAW_THINKING_CHAIN",
             "__reactNativeBundleEndSuccess__"
@@ -36,6 +40,7 @@ final class DexKitTargetLocator {
     private static final List<String> AGENT_TRACE_METHOD_ANCHORS = List.of(
             "buildToolCallItem",
             "buildToastStream",
+            "getAgentMeta",
             "loadScript"
     );
     private static final List<String> PROMPT_STRING_ANCHORS = List.of(
@@ -60,6 +65,7 @@ final class DexKitTargetLocator {
 
         Set<String> allClasses = new LinkedHashSet<>();
         Set<String> agentTraceClasses = new LinkedHashSet<>();
+        Set<String> agentSessionCallSiteClasses = new LinkedHashSet<>();
         Set<String> promptClasses = new LinkedHashSet<>();
         int matchedMethods = 0;
         try (DexKitBridge bridge = DexKitBridge.create(classLoader, false)) {
@@ -96,6 +102,10 @@ final class DexKitTargetLocator {
             matchedMethods += traceMethodMatches.size();
             addDeclaringClasses(traceMethodMatches, agentTraceClasses);
             addRelatedDeclaringClasses(traceMethodMatches, agentTraceClasses);
+            addAgentSessionCallSites(
+                    traceMethodMatches,
+                    agentSessionCallSiteClasses
+            );
 
             for (String anchor : PROMPT_STRING_ANCHORS) {
                 List<MethodData> methods = bridge.findMethod(FindMethod.create().matcher(
@@ -117,10 +127,53 @@ final class DexKitTargetLocator {
         return new DexDiscoveryHints(
                 List.copyOf(allClasses),
                 agentTraceClasses,
+                agentSessionCallSiteClasses,
                 List.copyOf(promptClasses),
                 matchedMethods,
                 elapsedMillis
         );
+    }
+
+    private static void addAgentSessionCallSites(
+            List<MethodData> methods,
+            Set<String> destination
+    ) {
+        for (MethodData method : methods) {
+            if (!"getAgentMeta".equals(method.getMethodName())
+                    || method.getParamCount() != 1
+                    || !String.class.getName().equals(method.getParamTypeNames().get(0))) {
+                continue;
+            }
+            try {
+                ClassData owner = method.getDeclaredClass();
+                addExecuteCallers(owner, destination);
+                for (ClassData interfaceType : owner.getInterfaces()) {
+                    addExecuteCallers(interfaceType, destination);
+                }
+            } catch (Throwable ignored) {
+                // Structural caller discovery remains available when relation data is absent.
+            }
+        }
+    }
+
+    private static void addExecuteCallers(
+            ClassData owner,
+            Set<String> destination
+    ) {
+        for (MethodData candidate : owner.getMethods()) {
+            if (isAgentExecute(candidate)) {
+                addDeclaringClasses(candidate.getCallers(), destination);
+            }
+        }
+    }
+
+    private static boolean isAgentExecute(MethodData method) {
+        List<String> parameters = method.getParamTypeNames();
+        return "execute".equals(method.getMethodName())
+                && parameters.size() == 5
+                && String.class.getName().equals(parameters.get(0))
+                && "kotlin.jvm.functions.Function2".equals(parameters.get(3))
+                && "kotlin.coroutines.Continuation".equals(parameters.get(4));
     }
 
     private static void addDeclaringClasses(

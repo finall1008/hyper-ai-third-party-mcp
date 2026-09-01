@@ -52,6 +52,9 @@ for MARKER in \
     'reasoning_delta' \
     'reasoningContent' \
     'tool_call_id' \
+    'AgentMeta(resolvedSystemPrompt=' \
+    'UserInput(text=' \
+    'ToolExecuting(toolName=' \
     'tool_done' \
     'ToolCallItem' \
     'MICLAW_THINKING_CHAIN' \

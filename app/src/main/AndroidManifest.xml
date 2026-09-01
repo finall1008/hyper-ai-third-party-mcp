@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <queries>
         <package android:name="com.miui.voiceassist" />
@@ -16,6 +17,13 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
+        <provider
+            android:name=".trace.AgentTraceProvider"
+            android:authorities="io.github.finall1008.xiaoaimcp.agenttrace"
+            android:exported="true"
+            android:grantUriPermissions="false"
+            tools:ignore="ExportedContentProvider" />
+
         <activity
             android:name=".ui.FirstOutputTimeoutActivity"
             android:exported="false" />
@@ -26,6 +34,18 @@
 
         <activity
             android:name=".ui.PromptPatchActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ui.AgentTraceRetentionActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ui.AgentTraceDetailActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ui.AgentTraceActivity"
             android:exported="false" />
 
         <activity

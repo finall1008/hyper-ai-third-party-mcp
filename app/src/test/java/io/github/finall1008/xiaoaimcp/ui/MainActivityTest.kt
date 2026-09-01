@@ -11,8 +11,8 @@ import org.junit.Test
 class MainActivityTest {
     @Test
     fun rootPagesAreStableAndDefaultToHome() {
-        assertEquals(listOf(RootPage.HOME, RootPage.ABOUT), ROOT_PAGES)
-        assertEquals(listOf("首页", "关于"), ROOT_PAGES.map { it.label })
+        assertEquals(listOf(RootPage.HOME, RootPage.TRACE, RootPage.ABOUT), ROOT_PAGES)
+        assertEquals(listOf("首页", "轨迹", "关于"), ROOT_PAGES.map { it.label })
         assertEquals(RootPage.HOME, DEFAULT_ROOT_PAGE)
     }
 
@@ -91,7 +91,7 @@ class MainActivityTest {
 
     @Test
     fun exposesVersionLabelAndOfficialReleasePage() {
-        assertEquals("当前版本 1.6.0", aboutVersionLabel("1.6.0"))
+        assertEquals("当前版本 1.7.0", aboutVersionLabel("1.7.0"))
         assertEquals(
             "https://github.com/finall1008/hyper-ai-third-party-mcp/releases",
             GITHUB_RELEASES_URL,
