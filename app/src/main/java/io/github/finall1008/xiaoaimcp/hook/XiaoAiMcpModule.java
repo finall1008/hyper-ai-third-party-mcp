@@ -46,6 +46,7 @@ public final class XiaoAiMcpModule extends XposedModule {
     private final AtomicBoolean invalidFilePolicyLogged = new AtomicBoolean(false);
     private final AtomicBoolean invalidPromptPatchLogged = new AtomicBoolean(false);
     private final AtomicBoolean agentTraceBundleFallbackLogged = new AtomicBoolean(false);
+    private final AtomicBoolean agentSessionTraceRuntimeLogged = new AtomicBoolean(false);
     private final ThreadLocal<ArrayDeque<String>> fileAgentContext =
             ThreadLocal.withInitial(ArrayDeque::new);
     private final AgentToolTraceStore agentToolTraceStore = new AgentToolTraceStore();
@@ -64,6 +65,7 @@ public final class XiaoAiMcpModule extends XposedModule {
     private volatile Method hostToastStreamBuilder;
     private volatile Object hostInstructionBuilder;
     private volatile Class<?> hostInstructionBuilderClass;
+    private volatile AgentTraceCaptureWriter agentTraceCaptureWriter;
 
     @Override
     public void onModuleLoaded(XposedModuleInterface.ModuleLoadedParam param) {
@@ -162,6 +164,9 @@ public final class XiaoAiMcpModule extends XposedModule {
         AgentTraceTargets knownAgentTraceTargets = agentTraceEnabled
                 ? AgentTraceTargetResolver.resolveKnown(hostClassLoader)
                 : null;
+        AgentSessionTraceTargets knownSessionTraceTargets = agentTraceEnabled
+                ? AgentSessionTraceTargetResolver.resolveKnown(hostClassLoader)
+                : null;
         FirstOutputTimeoutTargets knownFirstOutputTimeoutTargets =
                 firstOutputTimeoutConfig.overridesHost()
                         ? FirstOutputTimeoutTargetResolver.resolveKnown(hostClassLoader)
@@ -169,12 +174,15 @@ public final class XiaoAiMcpModule extends XposedModule {
         if (knownFileTargets == null || knownPromptTargets == null
                 || !knownAuxiliaryPromptTargets.hasAllCapabilities()
                 || (agentTraceEnabled && !knownAgentTraceTargets.hasAllCapabilities())
+                || (agentTraceEnabled && !knownSessionTraceTargets.installable())
                 || (firstOutputTimeoutConfig.overridesHost()
                         && knownFirstOutputTimeoutTargets == null)) {
             try {
                 dexHints = DexKitTargetLocator.discover(hostClassLoader);
                 log(Log.INFO, TAG, "DexKit discovery: classes=" + dexHints.classNames().size()
                         + ", agentTraceHints=" + dexHints.agentTraceClassNames().size()
+                        + ", sessionCallSites="
+                        + dexHints.agentSessionCallSiteClassNames().size()
                         + ", promptHints=" + dexHints.promptClassNames().size()
                         + ", methods=" + dexHints.matchedMethods()
                         + ", elapsedMs=" + dexHints.elapsedMillis());
@@ -218,6 +226,7 @@ public final class XiaoAiMcpModule extends XposedModule {
         }
         boolean agentTraceInstalled = false;
         String agentTraceResolver = "disabled";
+        String agentSessionTraceResolver = "disabled";
         if (agentTraceEnabled) {
             try {
                 AgentTraceTargets agentTraceTargets = !knownAgentTraceTargets.hasAllCapabilities()
@@ -235,6 +244,29 @@ public final class XiaoAiMcpModule extends XposedModule {
             } catch (Throwable error) {
                 agentTraceResolver = "unavailable";
                 log(Log.WARN, TAG, "Agent Trace unavailable; host behavior is unchanged", error);
+            }
+            try {
+                AgentSessionTraceTargets sessionTargets =
+                        AgentSessionTraceTargetResolver.resolve(
+                                hostClassLoader,
+                                catalog,
+                                dexHints
+                        );
+                boolean sessionCaptureInstalled = installAgentSessionTraceHook(
+                        context,
+                        sessionTargets
+                );
+                agentTraceInstalled = agentTraceInstalled || sessionCaptureInstalled;
+                agentSessionTraceResolver = sessionTargets.mode();
+                log(Log.INFO, TAG, "Agent session trace capture: resolver="
+                        + agentSessionTraceResolver + ", callSites="
+                        + sessionTargets.callSites().size() + ", installed="
+                        + sessionCaptureInstalled);
+            } catch (Throwable error) {
+                agentSessionTraceResolver = "unavailable";
+                log(Log.WARN, TAG,
+                        "Agent session trace capture unavailable; host trace UI remains active",
+                        error);
             }
         } else {
             log(Log.INFO, TAG, "Agent Trace disabled by module preference; no trace hooks installed");
@@ -284,6 +316,7 @@ public final class XiaoAiMcpModule extends XposedModule {
         log(Log.INFO, TAG, "XiaoAi " + versionName + " accepted (minimum 8.0); filePolicy="
                 + filePolicyInstalled
                 + ", agentTrace=" + agentTraceResolver
+                + ", agentSessionTrace=" + agentSessionTraceResolver
                 + ", promptPatch=" + promptResolver
                 + ", auxiliaryPromptPatch=" + auxiliaryPromptResolver
                 + ", firstOutputTimeout=" + firstOutputTimeoutResolver);
@@ -689,6 +722,84 @@ public final class XiaoAiMcpModule extends XposedModule {
                 bundlePatchInstalled,
                 initializationMarkerInstalled
         );
+    }
+
+    private boolean installAgentSessionTraceHook(
+            Context context,
+            AgentSessionTraceTargets targets
+    ) {
+        if (context == null || targets == null || !targets.installable()) {
+            return false;
+        }
+        try {
+            AgentTraceCaptureWriter writer = agentTraceCaptureWriter;
+            if (writer == null) {
+                writer = new AgentTraceCaptureWriter(context);
+                agentTraceCaptureWriter = writer;
+            }
+            AgentTraceCaptureWriter captureWriter = writer;
+            Method execute = targets.execute();
+            int deoptimized = tryDeoptimize(execute) ? 1 : 0;
+            for (Method callSite : targets.callSites()) {
+                if (tryDeoptimize(callSite)) {
+                    deoptimized++;
+                }
+            }
+            log(Log.INFO, TAG, "Agent session trace runtime prepared: deoptimized="
+                    + deoptimized + "/" + (targets.callSites().size() + 1));
+            hook(execute)
+                    .setId("xiaoai-agent-session-trace")
+                    .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
+                    .intercept(chain -> {
+                        if (agentSessionTraceRuntimeLogged.compareAndSet(false, true)) {
+                            log(Log.INFO, TAG, "Agent session trace executor intercepted");
+                        }
+                        Object rawAgentId = chain.getArg(0);
+                        Object userInput = chain.getArg(1);
+                        Object options = chain.getArg(2);
+                        Object callback = chain.getArg(3);
+                        if (!(rawAgentId instanceof String agentId)
+                                || userInput == null || options == null || callback == null) {
+                            return chain.proceed();
+                        }
+                        AgentTraceCaptureContext capture;
+                        Object wrapped;
+                        try {
+                            capture = AgentTraceCaptureContext.start(
+                                    chain.getThisObject(),
+                                    userInput,
+                                    options,
+                                    agentId,
+                                    targets,
+                                    captureWriter
+                            );
+                            wrapped = capture.wrapCallback(
+                                    callback,
+                                    execute.getParameterTypes()[3]
+                            );
+                        } catch (Throwable ignored) {
+                            return chain.proceed();
+                        }
+                        Object[] arguments = new Object[execute.getParameterCount()];
+                        for (int index = 0; index < arguments.length; index++) {
+                            arguments[index] = index == 3 ? wrapped : chain.getArg(index);
+                        }
+                        try {
+                            return chain.proceedWith(chain.getThisObject(), arguments);
+                        } catch (Throwable error) {
+                            try {
+                                capture.recordExecutionFailure(error);
+                            } catch (Throwable ignored) {
+                                // The original host failure stays authoritative.
+                            }
+                            throw error;
+                        }
+                    });
+            return true;
+        } catch (Throwable error) {
+            log(Log.WARN, TAG, "Agent session trace Hook unavailable", error);
+            return false;
+        }
     }
 
     private boolean isInitializationObject(Object value) {

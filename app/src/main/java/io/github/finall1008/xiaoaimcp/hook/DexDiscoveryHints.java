@@ -7,6 +7,7 @@ import java.util.Set;
 record DexDiscoveryHints(
         List<String> classNames,
         Set<String> agentTraceClassNames,
+        Set<String> agentSessionCallSiteClassNames,
         List<String> promptClassNames,
         int matchedMethods,
         long elapsedMillis
@@ -14,6 +15,7 @@ record DexDiscoveryHints(
     DexDiscoveryHints {
         classNames = List.copyOf(new LinkedHashSet<>(classNames));
         agentTraceClassNames = Set.copyOf(agentTraceClassNames);
+        agentSessionCallSiteClassNames = Set.copyOf(agentSessionCallSiteClassNames);
         promptClassNames = List.copyOf(new LinkedHashSet<>(promptClassNames));
     }
 
@@ -23,15 +25,18 @@ record DexDiscoveryHints(
             int matchedMethods,
             long elapsedMillis
     ) {
-        this(classNames, agentTraceClassNames, List.of(), matchedMethods, elapsedMillis);
+        this(classNames, agentTraceClassNames, Set.of(), List.of(), matchedMethods, elapsedMillis);
     }
 
     static DexDiscoveryHints empty() {
-        return new DexDiscoveryHints(List.of(), Set.of(), List.of(), 0, 0L);
+        return new DexDiscoveryHints(List.of(), Set.of(), Set.of(), List.of(), 0, 0L);
     }
 
     boolean isEmpty() {
-        return classNames.isEmpty() && agentTraceClassNames.isEmpty() && promptClassNames.isEmpty();
+        return classNames.isEmpty()
+                && agentTraceClassNames.isEmpty()
+                && agentSessionCallSiteClassNames.isEmpty()
+                && promptClassNames.isEmpty();
     }
 
     boolean hasAgentTraceHints() {

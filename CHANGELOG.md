@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+## 1.7.0 - 2026-09-01
+
+- 新增模块内 Agent Trace 页面，只记录升级后新产生的会话，并按 Turn 展示有效 System Prompt、
+  UserInput、conversation、工具目录、reasoning、模型输出、重试、错误及完整工具调用生命周期。
+- 新增受调用方 UID/包名限制的流式轨迹写入 Provider 和模块私有 SQLite 事件库；采集在有界后台队列中完成，
+  不阻塞 Agent 回调，发生丢失时以 GAP 事件明确标记轨迹不完整。
+- 新增默认 30 天或 100 会话的保留策略，天数和会话数可分别自定义或设为不限制；支持搜索、类型筛选、
+  原始 JSON、逐块复制、删除单个会话和清空全部轨迹。
+- 将 Agent Trace 作为模块底栏独立 Tab；详情页使用原生顶部删除 Action，事件卡支持整卡点击展开和折叠，
+  原始 JSON 与复制操作统一为 MIUIX 图标按钮。
+- 修复 Android 17 ART 优化接口调用点后可能绕过 executor Hook，以及 `Application.attach` 阶段
+  Application Context 尚未就绪导致首批轨迹无法写入的问题；已在超级小爱 `8.2.3.1619` 实机验证。
+
 ## 1.6.0 - 2026-08-30
 
 - 移除模块内的第三方 MCP 编辑、运行时配置注入、管理器捕获、定点反优化和在线重载；

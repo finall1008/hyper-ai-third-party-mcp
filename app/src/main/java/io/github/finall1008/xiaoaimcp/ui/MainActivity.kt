@@ -60,7 +60,6 @@ import top.yukonga.miuix.kmp.icon.extended.Messages
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.icon.extended.Timer
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 class MainActivity :
@@ -73,6 +72,7 @@ class MainActivity :
     private var legacyMcpRepository: LegacyMcpConfigRepository? = null
     private var restartInFlight by mutableStateOf(false)
     private var legacyMigrationNoticePending by mutableStateOf(false)
+    private val agentTraceController by lazy { AgentTraceUiController(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,7 +91,7 @@ class MainActivity :
                     onOpenPromptPatches = {
                         startActivity(Intent(this, PromptPatchActivity::class.java))
                     },
-                    onAgentTraceEnabledChange = ::setAgentTraceEnabled,
+                    agentTraceController = agentTraceController,
                     onOpenFirstOutputTimeout = {
                         startActivity(Intent(this, FirstOutputTimeoutActivity::class.java))
                     },
@@ -110,17 +110,25 @@ class MainActivity :
         super.onStart()
         BridgeApplication.addServiceStateListener(this, true)
         XiaoAiRootRestarter.addListener(this)
+        agentTraceController.start()
     }
 
     override fun onResume() {
         super.onResume()
         refresh()
+        agentTraceController.resume()
     }
 
     override fun onStop() {
         XiaoAiRootRestarter.removeListener(this)
         BridgeApplication.removeServiceStateListener(this)
+        agentTraceController.stop()
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        agentTraceController.destroy()
+        super.onDestroy()
     }
 
     override fun onServiceStateChanged(service: XposedService?) {
@@ -187,10 +195,6 @@ class MainActivity :
             frameworkStatus = frameworkStatus,
             targetStatus = targetStatus,
             editingEnabled = serviceReady && targetReady,
-            agentTraceEnabled = preferences?.getBoolean(
-                BridgeContract.PREF_AGENT_TRACE_ENABLED,
-                BridgeContract.DEFAULT_AGENT_TRACE_ENABLED,
-            ) ?: BridgeContract.DEFAULT_AGENT_TRACE_ENABLED,
             firstOutputTimeout = preferences?.let {
                 FirstOutputTimeoutRepository(it).load()
             } ?: FirstOutputTimeoutConfig.hostDefault(),
@@ -261,17 +265,6 @@ class MainActivity :
         }
     }
 
-    private fun setAgentTraceEnabled(enabled: Boolean) {
-        try {
-            val editor = preferences?.edit()
-                ?: error("API 102 服务未连接")
-            editor.putBoolean(BridgeContract.PREF_AGENT_TRACE_ENABLED, enabled).apply()
-            state = state.copy(agentTraceEnabled = enabled)
-        } catch (error: Exception) {
-            errorMessage = safeMessage(error)
-        }
-    }
-
     private fun openReleases() {
         try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_RELEASES_URL)))
@@ -296,7 +289,6 @@ private data class MainUiState(
     val frameworkStatus: StatusUi = StatusUi(StatusLevel.ERROR, "正在连接 API 102 服务…"),
     val targetStatus: StatusUi = StatusUi(StatusLevel.WARNING, "正在检查超级小爱版本…"),
     val editingEnabled: Boolean = false,
-    val agentTraceEnabled: Boolean = BridgeContract.DEFAULT_AGENT_TRACE_ENABLED,
     val firstOutputTimeout: FirstOutputTimeoutConfig =
         FirstOutputTimeoutConfig.hostDefault(),
     val filePolicySummary: String = "正在读取文件权限配置…",
@@ -310,6 +302,7 @@ private enum class StatusLevel { SUCCESS, WARNING, ERROR }
 
 internal enum class RootPage(val label: String) {
     HOME("首页"),
+    TRACE("轨迹"),
     ABOUT("关于"),
 }
 
@@ -325,7 +318,7 @@ private fun MainScreen(
     onDismissError: () -> Unit,
     onOpenFilePolicy: () -> Unit,
     onOpenPromptPatches: () -> Unit,
-    onAgentTraceEnabledChange: (Boolean) -> Unit,
+    agentTraceController: AgentTraceUiController,
     onOpenFirstOutputTimeout: () -> Unit,
     restartInFlight: Boolean,
     onRestartXiaoAi: () -> Unit,
@@ -339,43 +332,46 @@ private fun MainScreen(
     val appName = stringResource(R.string.app_name)
     Box(modifier = Modifier.fillMaxSize()) {
         key(selectedPage) {
-            BridgePageScaffold(
-                title = if (selectedPage == RootPage.HOME) {
-                    appName
-                } else {
-                    "关于"
-                },
-                actions = {
-                    if (selectedPage == RootPage.HOME) {
-                        IconButton(
-                            onClick = { showRestartConfirmation = true },
-                            enabled = !restartInFlight,
-                        ) {
-                            Icon(
-                                imageVector = MiuixIcons.Refresh,
-                                contentDescription = "重启超级小爱",
-                                tint = MiuixTheme.colorScheme.onSurface,
-                            )
+            when (selectedPage) {
+                RootPage.TRACE -> AgentTraceRoute(
+                    controller = agentTraceController,
+                    onBack = null,
+                    extraBottomPadding = 108.dp,
+                )
+                RootPage.HOME, RootPage.ABOUT -> BridgePageScaffold(
+                    title = if (selectedPage == RootPage.HOME) appName else "关于",
+                    actions = {
+                        if (selectedPage == RootPage.HOME) {
+                            IconButton(
+                                onClick = { showRestartConfirmation = true },
+                                enabled = !restartInFlight,
+                            ) {
+                                Icon(
+                                    imageVector = MiuixIcons.Refresh,
+                                    contentDescription = "重启超级小爱",
+                                    tint = MiuixTheme.colorScheme.onSurface,
+                                )
+                            }
                         }
+                    },
+                ) { padding, scrollBehavior ->
+                    if (selectedPage == RootPage.HOME) {
+                        HomePage(
+                            state = state,
+                            scaffoldPadding = padding,
+                            scrollBehavior = scrollBehavior,
+                            onOpenFilePolicy = onOpenFilePolicy,
+                            onOpenPromptPatches = onOpenPromptPatches,
+                            onEditTimeout = onOpenFirstOutputTimeout,
+                            onCopyLegacyMcpConfig = onCopyLegacyMcpConfig,
+                        )
+                    } else {
+                        AboutPage(
+                            scaffoldPadding = padding,
+                            scrollBehavior = scrollBehavior,
+                            onOpenReleases = onOpenReleases,
+                        )
                     }
-                },
-            ) { padding, scrollBehavior ->
-                when (selectedPage) {
-                    RootPage.HOME -> HomePage(
-                        state = state,
-                        scaffoldPadding = padding,
-                        scrollBehavior = scrollBehavior,
-                        onOpenFilePolicy = onOpenFilePolicy,
-                        onOpenPromptPatches = onOpenPromptPatches,
-                        onAgentTraceEnabledChange = onAgentTraceEnabledChange,
-                        onEditTimeout = onOpenFirstOutputTimeout,
-                        onCopyLegacyMcpConfig = onCopyLegacyMcpConfig,
-                    )
-                    RootPage.ABOUT -> AboutPage(
-                        scaffoldPadding = padding,
-                        scrollBehavior = scrollBehavior,
-                        onOpenReleases = onOpenReleases,
-                    )
                 }
             }
         }
@@ -393,6 +389,12 @@ private fun MainScreen(
                     onClick = { selectedPage = RootPage.HOME },
                     icon = MiuixIcons.Home,
                     label = RootPage.HOME.label,
+                )
+                FloatingNavigationBarItem(
+                    selected = selectedPage == RootPage.TRACE,
+                    onClick = { selectedPage = RootPage.TRACE },
+                    icon = MiuixIcons.ListView,
+                    label = RootPage.TRACE.label,
                 )
                 FloatingNavigationBarItem(
                     selected = selectedPage == RootPage.ABOUT,
@@ -436,7 +438,6 @@ private fun HomePage(
     scrollBehavior: ScrollBehavior,
     onOpenFilePolicy: () -> Unit,
     onOpenPromptPatches: () -> Unit,
-    onAgentTraceEnabledChange: (Boolean) -> Unit,
     onEditTimeout: () -> Unit,
     onCopyLegacyMcpConfig: () -> Unit,
 ) {
@@ -455,14 +456,6 @@ private fun HomePage(
         item { SectionLabel("Agent 设置", Modifier.padding(top = 4.dp)) }
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
-                SwitchPreference(
-                    checked = state.agentTraceEnabled,
-                    onCheckedChange = onAgentTraceEnabledChange,
-                    title = "Agent 完整轨迹",
-                    summary = "显示 reasoning 与工具详情；重启后生效",
-                    startAction = { PreferenceIcon(MiuixIcons.ListView) },
-                    enabled = state.editingEnabled,
-                )
                 ArrowPreference(
                     title = "模型首次输出超时",
                     summary = firstOutputTimeoutSummary(state.firstOutputTimeout),

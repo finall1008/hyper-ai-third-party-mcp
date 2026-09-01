@@ -5,6 +5,7 @@
 }
 
 -keep class io.github.finall1008.xiaoaimcp.BridgeApplication { *; }
+-keep class io.github.finall1008.xiaoaimcp.trace.AgentTraceProvider { *; }
 -keep class io.github.finall1008.xiaoaimcp.ui.** { *; }
 
 # Keep JNI entry points even if dependency consumer rules are not merged by a future build setup.

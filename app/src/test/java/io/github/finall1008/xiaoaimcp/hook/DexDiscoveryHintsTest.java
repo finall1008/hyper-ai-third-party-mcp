@@ -20,6 +20,7 @@ public final class DexDiscoveryHintsTest {
 
         assertEquals(List.of("host.Manager", "host.Policy"), hints.classNames());
         assertEquals(Set.of("host.Trace"), hints.agentTraceClassNames());
+        assertTrue(hints.agentSessionCallSiteClassNames().isEmpty());
         assertEquals(3, hints.matchedMethods());
         assertEquals(12L, hints.elapsedMillis());
         assertTrue(DexDiscoveryHints.empty().isEmpty());
